@@ -1,15 +1,25 @@
-use esp_idf_svc::{hal::prelude::Peripherals, log::EspLogger, sys::link_patches};
-use std::result::Result::Ok;
-
 use crate::libs::camera::{Camera, CameraPins};
+use anyhow::Ok;
+use esp_idf_svc::{
+    eventloop::EspSystemEventLoop,
+    hal::prelude::Peripherals,
+    log::EspLogger,
+    sys::link_patches,
+    wifi::{self, BlockingWifi, EspWifi},
+};
 
+mod camera_server;
 mod libs;
+
+const SSID: &str = env!("WIFI_SSID");
+const PASSWORD: &str = env!("WIFI_PASS");
 
 fn main() -> anyhow::Result<()> {
     link_patches();
     EspLogger::initialize_default();
 
     let peripherals = Peripherals::take()?;
+    let sys_loop = EspSystemEventLoop::take()?;
 
     log::info!("Initializing camera...");
     let camera_pins = CameraPins {
@@ -32,23 +42,34 @@ fn main() -> anyhow::Result<()> {
     let camera = Camera::init(camera_pins)?;
     log::info!("Camera initialized successfully!");
 
-    log::info!("Starting frame capture loop...");
-    loop {
-        match camera.capture() {
-            Ok(frame) => {
-                let data = frame.data();
-                let width = frame.width();
-                let height = frame.height();
-                log::info!(
-                    "Captured frame: {}x{}, data size: {} bytes",
-                    width,
-                    height,
-                    data.len()
-                );
-            }
-            Err(e) => {
-                log::error!("Failed to capture frame: {}", e);
-            }
-        }
-    }
+    // Start wifi
+    log::info!("Connecting to WiFi network '{}'...", SSID);
+    let mut wifi = BlockingWifi::wrap(
+        EspWifi::new(peripherals.modem, sys_loop.clone(), None)?,
+        sys_loop,
+    )?;
+    connect_wifi(&mut wifi)?;
+    let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
+    log::info!("Connected to WiFi! IP address: {}", ip_info.ip);
+
+    Ok(())
+}
+
+fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()> {
+    let wifi_config: wifi::Configuration = wifi::Configuration::Client(wifi::ClientConfiguration {
+        ssid: SSID
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("SSID must be a valid UTF-8 string"))?,
+        password: PASSWORD
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Password must be a valid UTF-8 string"))?,
+        ..Default::default()
+    });
+
+    wifi.set_configuration(&wifi_config)?;
+    wifi.start()?;
+    wifi.connect()?;
+    wifi.wait_netif_up()?;
+
+    Ok(())
 }

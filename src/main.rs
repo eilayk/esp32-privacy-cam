@@ -8,8 +8,8 @@ use esp_idf_svc::{
     wifi::{self, BlockingWifi, EspWifi},
 };
 
-mod camera_server;
 mod libs;
+mod video_server;
 
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
@@ -52,6 +52,16 @@ fn main() -> anyhow::Result<()> {
     let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
     log::info!("Connected to WiFi! IP address: {}", ip_info.ip);
 
+    // Start HTTP server
+    log::info!("Starting HTTP server...");
+    let video_server = video_server::VideoHttpServer::new()?;
+    log::info!("HTTP server started successfully!");
+    log::info!("Test the http server at http://{}/", ip_info.ip);
+
+    // stop the main task but keep wifi, camera and http server running
+    core::mem::forget(camera);
+    core::mem::forget(wifi);
+    core::mem::forget(video_server);
     Ok(())
 }
 

@@ -1,0 +1,11 @@
+# Name,   Type, SubType, Offset,  Size,       Flags
+nvs,      data, nvs,     ,        0x4000,
+otadata,  data, ota,     ,        0x2000,
+phy_init, data, phy,     ,        0x1000,
+
+# Factory App Partition (4Mb)
+# 0x400000 = 4,194,304 bytes
+factory,  app,  factory, ,        0x400000,
+
+# Large Storage Partition (approx 11.5MB remaining)
+storage,  data, spiffs,  ,        0xb00000,

@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::time::Duration;
 
+use crossbeam::channel::Receiver;
 use esp_idf_svc::{
     http::{self, server::EspHttpServer, Method},
     io::Write,
 };
 
-use crate::SharedState;
+use crate::libs::camera::Frame;
 
 pub struct VideoHttpServer<'a> {
     _server: EspHttpServer<'a>,
@@ -14,7 +15,7 @@ pub struct VideoHttpServer<'a> {
 const PAGE_HTML_BYTES: &[u8] = include_bytes!("page.html");
 
 impl<'a> VideoHttpServer<'a> {
-    pub fn new(shared_state: Arc<SharedState>) -> anyhow::Result<Self> {
+    pub fn new(rx: Receiver<Frame>) -> anyhow::Result<Self> {
         let server_config = http::server::Configuration::default();
 
         let mut http_server = EspHttpServer::new(&server_config)?;
@@ -31,27 +32,21 @@ impl<'a> VideoHttpServer<'a> {
                 &[("Content-Type", "multipart/x-mixed-replace; boundary=frame")],
             )?;
 
-            loop {
-                let frame_to_send = {
-                    let mut lock = shared_state.latest_frame.lock().unwrap();
+            let mut len_buf = itoa::Buffer::new();
+            while let Ok(frame) = rx.recv_timeout(Duration::from_secs(2)) {
+                let data = frame.data();
 
-                    // return lock and sleep until a new frame is available
-                    lock = shared_state.condvar.wait(lock).unwrap();
+                res.write_all(b"--frame\r\n")?;
+                res.write_all(b"Content-Type: image/jpeg\r\n")?;
+                res.write_all(b"Content-Length: ")?;
+                res.write_all(len_buf.format(data.len()).as_bytes())?;
+                res.write_all(b"\r\n\r\n")?;
 
-                    lock.as_ref().cloned()
-                };
-
-                if let Some(data) = frame_to_send {
-                    let part_header = format!(
-                        "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
-                        data.len()
-                    );
-                    res.write_all(part_header.as_bytes())?;
-                    res.write_all(&data)?;
-                    res.write_all(b"\r\n")?;
-                    res.flush()?;
-                }
+                res.write_all(&data)?;
+                res.write_all(b"\r\n")?;
+                res.flush()?;
             }
+            Ok(())
         })?;
 
         Ok(Self {

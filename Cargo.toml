@@ -26,6 +26,8 @@ experimental = ["esp-idf-svc/experimental"]
 log = "0.4"
 esp-idf-svc = "0.51"
 anyhow = "1.0.101"
+crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
+itoa = "1.0.17"
 
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp32-camera", version = "2.1.5" }

@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::sync::Arc;
 
 use esp_idf_svc::{
     hal::gpio::{
@@ -9,10 +9,9 @@ use esp_idf_svc::{
         camera::{
             camera_config_t, camera_config_t__bindgen_ty_1, camera_config_t__bindgen_ty_2,
             camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_fb_t,
-            camera_grab_mode_t_CAMERA_GRAB_LATEST, camera_grab_mode_t_CAMERA_GRAB_WHEN_EMPTY,
-            esp_camera_deinit, esp_camera_fb_get, esp_camera_fb_return, esp_camera_init,
-            framesize_t_FRAMESIZE_VGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
-            pixformat_t_PIXFORMAT_JPEG,
+            camera_grab_mode_t_CAMERA_GRAB_LATEST, esp_camera_deinit, esp_camera_fb_get,
+            esp_camera_fb_return, esp_camera_init, framesize_t_FRAMESIZE_VGA,
+            ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0, pixformat_t_PIXFORMAT_JPEG,
         },
         ESP_OK,
     },
@@ -39,14 +38,14 @@ pub struct CameraPins {
 
 pub struct Camera;
 
-pub struct Frame<'a> {
+pub struct Frame {
     fb: *mut camera_fb_t,
-    // link Frame's lifetime to Camera's lifetime to ensure that Frame cannot outlive Camera
-    // prevent dropping Camera while Frame is still alive
-    _camera_phantom: core::marker::PhantomData<&'a Camera>,
+
+    // Avoid deallocating the camera while frames are still in use.
+    _camera: Arc<Camera>,
 }
 
-impl<'a> Frame<'a> {
+impl Frame {
     pub fn data(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts((*self.fb).buf, (*self.fb).len) }
     }
@@ -60,7 +59,9 @@ impl<'a> Frame<'a> {
     }
 }
 
-impl<'a> Drop for Frame<'a> {
+unsafe impl Send for Frame {}
+
+impl Drop for Frame {
     fn drop(&mut self) {
         unsafe {
             esp_camera_fb_return(self.fb);
@@ -69,7 +70,7 @@ impl<'a> Drop for Frame<'a> {
 }
 
 impl Camera {
-    pub fn init(pins: CameraPins) -> anyhow::Result<Self> {
+    pub fn init(pins: CameraPins) -> anyhow::Result<Arc<Self>> {
         // https://github.com/espressif/esp32-camera/tree/master?tab=readme-ov-file#initialization
         let config = camera_config_t {
             pin_pwdn: -1,
@@ -105,13 +106,13 @@ impl Camera {
             jpeg_quality: 20,
             fb_count: 4,
             fb_location: camera_fb_location_t_CAMERA_FB_IN_PSRAM,
-            grab_mode: camera_grab_mode_t_CAMERA_GRAB_WHEN_EMPTY,
+            grab_mode: camera_grab_mode_t_CAMERA_GRAB_LATEST,
             ..Default::default()
         };
 
         let ret = unsafe { esp_camera_init(&config) };
         return match ret {
-            ESP_OK => Ok(Self),
+            ESP_OK => Ok(Arc::new(Self)),
             _ => Err(anyhow::anyhow!(
                 "Failed to initialize camera: error code {}",
                 ret
@@ -119,14 +120,14 @@ impl Camera {
         };
     }
 
-    pub fn capture(&self) -> anyhow::Result<Frame> {
+    pub fn capture(self: &Arc<Self>) -> anyhow::Result<Frame> {
         let fb = unsafe { esp_camera_fb_get() };
         return if fb.is_null() {
             Err(anyhow::anyhow!("Failed to capture frame"))
         } else {
             Ok(Frame {
                 fb,
-                _camera_phantom: PhantomData,
+                _camera: Arc::clone(self),
             })
         };
     }

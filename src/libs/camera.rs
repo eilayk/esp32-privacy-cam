@@ -9,9 +9,10 @@ use esp_idf_svc::{
         camera::{
             camera_config_t, camera_config_t__bindgen_ty_1, camera_config_t__bindgen_ty_2,
             camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_fb_t,
-            camera_grab_mode_t_CAMERA_GRAB_WHEN_EMPTY, esp_camera_deinit, esp_camera_fb_get,
-            esp_camera_fb_return, esp_camera_init, framesize_t_FRAMESIZE_VGA,
-            ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0, pixformat_t_PIXFORMAT_JPEG,
+            camera_grab_mode_t_CAMERA_GRAB_LATEST, camera_grab_mode_t_CAMERA_GRAB_WHEN_EMPTY,
+            esp_camera_deinit, esp_camera_fb_get, esp_camera_fb_return, esp_camera_init,
+            framesize_t_FRAMESIZE_VGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
+            pixformat_t_PIXFORMAT_JPEG,
         },
         ESP_OK,
     },
@@ -101,8 +102,8 @@ impl Camera {
             pixel_format: pixformat_t_PIXFORMAT_JPEG,
             frame_size: framesize_t_FRAMESIZE_VGA,
 
-            jpeg_quality: 10,
-            fb_count: 2,
+            jpeg_quality: 20,
+            fb_count: 4,
             fb_location: camera_fb_location_t_CAMERA_FB_IN_PSRAM,
             grab_mode: camera_grab_mode_t_CAMERA_GRAB_WHEN_EMPTY,
             ..Default::default()

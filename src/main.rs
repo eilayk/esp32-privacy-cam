@@ -4,9 +4,11 @@ use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::prelude::Peripherals,
     log::EspLogger,
+    nvs::EspDefaultNvsPartition,
     sys::link_patches,
     wifi::{self, BlockingWifi, EspWifi},
 };
+use std::sync::{Arc, Condvar, Mutex};
 
 mod libs;
 mod video_server;
@@ -14,12 +16,23 @@ mod video_server;
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
+// Type alias for the shared frame data structure
+type LockedFrame = Arc<Mutex<Option<Arc<Vec<u8>>>>>;
+
+pub struct SharedState {
+    // The latest captured frame, wrapped in an Arc for shared ownership and a Mutex for thread safety
+    pub latest_frame: LockedFrame,
+    // A condition variable to signal when a new frame is available
+    pub condvar: Condvar,
+}
+
 fn main() -> anyhow::Result<()> {
     link_patches();
     EspLogger::initialize_default();
 
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
+    let nvs = EspDefaultNvsPartition::take()?;
 
     log::info!("Initializing camera...");
     let camera_pins = CameraPins {
@@ -45,24 +58,38 @@ fn main() -> anyhow::Result<()> {
     // Start wifi
     log::info!("Connecting to WiFi network '{}'...", SSID);
     let mut wifi = BlockingWifi::wrap(
-        EspWifi::new(peripherals.modem, sys_loop.clone(), None)?,
+        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?,
         sys_loop,
     )?;
     connect_wifi(&mut wifi)?;
     let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
     log::info!("Connected to WiFi! IP address: {}", ip_info.ip);
 
+    let shared_state = Arc::new(SharedState {
+        latest_frame: Arc::new(Mutex::new(None)),
+        condvar: Condvar::new(),
+    });
+
     // Start HTTP server
     log::info!("Starting HTTP server...");
-    let video_server = video_server::VideoHttpServer::new()?;
+    let _video_server = video_server::VideoHttpServer::new(shared_state.clone())?;
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
-    // stop the main task but keep wifi, camera and http server running
-    core::mem::forget(camera);
-    core::mem::forget(wifi);
-    core::mem::forget(video_server);
-    Ok(())
+    loop {
+        // Capture a frame from the camera
+        let frame = camera.capture()?;
+        let raw_data = frame.data();
+        let shared_data = Arc::new(raw_data.to_vec());
+
+        // Update the latest frame
+        {
+            let mut frame_lock = shared_state.latest_frame.lock().unwrap();
+            *frame_lock = Some(shared_data);
+        }
+        // Notify any waiting threads that a new frame is available
+        shared_state.condvar.notify_all();
+    }
 }
 
 fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()> {

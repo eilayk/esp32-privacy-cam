@@ -34,6 +34,11 @@ remote_component = { name = "espressif/esp32-camera", version = "2.1.5" }
 bindings_header = "src/libs/bindings.h"
 bindings_module = "camera"
 
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp-tflite-micro", version = "1.3.5" }
+bindings_header = "src/libs/bindings.h"
+bindings_module = "esp_tflite_micro"
+
 # --- Optional Embassy Integration ---
 # esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
 

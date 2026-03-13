@@ -9,4 +9,4 @@
 #include "esp_nn.h"
 #endif
 
-#include "esp_tflite_micro/esp_tflite_micro_bridge.h"
+#include "esp_tflite_bridge/esp_tflite_micro_bridge.h"

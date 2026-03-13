@@ -1,4 +1,4 @@
-use crate::libs::{camera::Frame, esp_tflite_micro::TFLiteEngine};
+use crate::libs::{camera::Frame, esp_tflite_bridge::TFLiteEngine};
 use anyhow::Result;
 
 const MODEL_DATA: &[u8] = include_bytes!("models/face_detection_front_128_integer_quant.tflite");

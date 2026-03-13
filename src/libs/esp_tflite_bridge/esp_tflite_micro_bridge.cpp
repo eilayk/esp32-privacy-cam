@@ -10,13 +10,21 @@ extern "C" TFLiteEngine tflite_create(const uint8_t* model_data, uint8_t* arena,
     auto model = tflite::GetModel(model_data);
     
     // add the needed operators
-    static tflite::MicroMutableOpResolver<6> resolver;
+    static tflite::MicroMutableOpResolver<14> resolver;
     resolver.AddConv2D();
     resolver.AddDepthwiseConv2D();
     resolver.AddReshape();
     resolver.AddAdd();
     resolver.AddMul();
     resolver.AddConcatenation();
+    resolver.AddQuantize();
+    resolver.AddDequantize();
+    resolver.AddPad();
+    resolver.AddLogistic();
+    resolver.AddRelu();
+    resolver.AddMaxPool2D();
+    resolver.AddLeakyRelu();
+    resolver.AddSlice();
 
     // create the interpreter
     auto* interpreter = new tflite::MicroInterpreter(

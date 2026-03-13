@@ -2,18 +2,12 @@ use std::sync::Arc;
 
 use esp_idf_svc::{
     hal::gpio::{
-        Gpio10, Gpio11, Gpio12, Gpio13, Gpio15, Gpio16, Gpio17, Gpio18, Gpio4, Gpio5, Gpio6, Gpio7,
-        Gpio8, Gpio9, Pin,
+        Gpio4, Gpio5, Gpio6, Gpio7, Gpio8, Gpio9, Gpio10, Gpio11, Gpio12, Gpio13, Gpio15, Gpio16, Gpio17, Gpio18, Pin
     },
     sys::{
-        camera::{
-            camera_config_t, camera_config_t__bindgen_ty_1, camera_config_t__bindgen_ty_2,
-            camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_fb_t,
-            camera_grab_mode_t_CAMERA_GRAB_LATEST, esp_camera_deinit, esp_camera_fb_get,
-            esp_camera_fb_return, esp_camera_init, framesize_t_FRAMESIZE_VGA,
-            ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0, pixformat_t_PIXFORMAT_JPEG,
-        },
-        ESP_OK,
+        ESP_OK, camera::{
+            camera_config_t, camera_config_t__bindgen_ty_1, camera_config_t__bindgen_ty_2, camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_fb_t, camera_grab_mode_t_CAMERA_GRAB_LATEST, esp_camera_deinit, esp_camera_fb_get, esp_camera_fb_return, esp_camera_init, esp_jpeg_decode, esp_jpeg_image_cfg_t, esp_jpeg_image_format_t_JPEG_IMAGE_FORMAT_RGB888, esp_jpeg_image_output_t, esp_jpeg_image_scale_t_JPEG_IMAGE_SCALE_1_4, fmt2rgb888, framesize_t_FRAMESIZE_VGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0, pixformat_t_PIXFORMAT_JPEG
+        }
     },
 };
 
@@ -56,6 +50,55 @@ impl Frame {
 
     pub fn height(&self) -> usize {
         unsafe { (*self.fb).height }
+    }
+
+    pub fn length(&self) -> usize {
+        unsafe { (*self.fb).len }
+    }
+
+    pub fn decode_test(&self, out_buf: &mut Vec<u8>) -> anyhow::Result<()> {
+        // input VGA (640x480)
+        // scale to 1/4 size (160x120) to save memory and processing time
+        // squeeze into 128x128 input for BlazeFace model 
+
+        // create config for JPEG decoder
+        let mut cfg = esp_jpeg_image_cfg_t {
+            indata: self.data().as_ptr() as *mut u8,
+            indata_size: self.length() as u32,
+            outbuf: out_buf.as_mut_ptr(),
+            outbuf_size: out_buf.capacity() as u32,
+            out_format: esp_jpeg_image_format_t_JPEG_IMAGE_FORMAT_RGB888,
+            out_scale: esp_jpeg_image_scale_t_JPEG_IMAGE_SCALE_1_4,
+            flags: Default::default(),
+            advanced: Default::default(),
+            priv_: Default::default(),
+        };
+
+        // store output info (width, height) after decoding
+        let mut out_info = esp_jpeg_image_output_t::default();
+
+        unsafe { 
+            // decode JPEG to RGB888 format in the provided output buffer
+            let res = esp_jpeg_decode(&mut cfg, &mut out_info); 
+            if res != ESP_OK {
+                anyhow::bail!("Failed to decode JPEG: error code {}", res);
+            }
+            // set output buffer length based on decoded image size (width * height * 3 for RGB888)
+            out_buf.set_len((out_info.width * out_info.height * 3) as usize);
+        };
+
+        Ok(())
+    }
+
+    pub fn to_rgb888(&self, rgb_buf: &mut Vec<u8>) -> anyhow::Result<()> {
+        let res = unsafe { fmt2rgb888(
+            (*self.fb).buf, self.length(), pixformat_t_PIXFORMAT_JPEG, rgb_buf.as_mut_ptr()) };
+        
+        if res != true {
+            anyhow::bail!("Failed to convert image to RGB888");
+        }
+
+        Ok(())
     }
 }
 

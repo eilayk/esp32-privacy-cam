@@ -8,10 +8,9 @@ const TENSOR_ARENA_SIZE: usize = 512 * 1024;
 
 const NUM_BOXES: usize = 896;
 
-pub struct FaceDetector {
-    model: TFLiteEngine,
-
-}
+const MODEL_INPUT_WIDTH: usize = 128;
+const MODEL_INPUT_HEIGHT: usize = 128;
+const MODEL_INPUT_CHANNELS: usize = 3; // RGB
 
 #[derive(Debug)]
 pub struct FaceDetection {
@@ -22,20 +21,28 @@ pub struct FaceDetection {
     pub height: f32,
 }
 
+pub struct FaceDetector {
+    model: TFLiteEngine,
+    // buffer to hold converted rgb data for model input
+    // reuse the same buffer for each frame
+    rgb_buf: Vec<u8>,
+}
+
 impl FaceDetector {
     pub fn new() -> Result<Self> {
         let model = TFLiteEngine::new(MODEL_DATA, TENSOR_ARENA_SIZE)?;
-        Ok(FaceDetector { model } )
+        let rgb_buf = vec![0u8; MODEL_INPUT_WIDTH * MODEL_INPUT_HEIGHT * MODEL_INPUT_CHANNELS];
+        Ok(FaceDetector { model, rgb_buf })
     }
 
     /// Converts 0..255 pixels to -128..127 quantized i8 values
-    fn preprocess_image(image_data: &[u8], input_tensor: &mut [i8]) -> Result<()> {
-        if image_data.len() != input_tensor.len() {
-            anyhow::bail!("Input buffer size mismatch! Expected 128x128x3");
-        }
-        
+    fn preprocess_frame(&mut self, frame: &Frame, input_tensor: &mut [i8]) -> Result<()> {
+        // input is JPEG(VGA)
+        // BlazeFace expects 128x128 RGB
+        frame.decode_test(&mut self.rgb_buf)?;
+
         // BlazeFace Quantized expects: (pixel / 255.0 - 0.5) * 256
-        for (i, &pixel) in image_data.iter().enumerate() {
+        for (i, &pixel) in self.rgb_buf.iter().enumerate() {
             input_tensor[i] = (pixel as i16 - 128) as i8;
         }
         Ok(())
@@ -73,7 +80,7 @@ impl FaceDetector {
     pub fn detect_faces(&mut self, frame: &Frame) -> Result<Vec<FaceDetection>> {
         // Preprocess the image data as needed by the model (e.g., resize, normalize)
         let input_tensor = unsafe { self.model.input_tensor_mut::<i8>(0)? };
-        Self::preprocess_image(frame.data(), input_tensor)?;
+        self.preprocess_frame(frame, input_tensor)?;
 
         // Run inference
         self.model.invoke()?;

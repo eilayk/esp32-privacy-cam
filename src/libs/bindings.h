@@ -8,3 +8,5 @@
 #include "tensorflow/lite/c/builtin_op_data.h"
 #include "esp_nn.h"
 #endif
+
+#include "esp_tflite_micro/esp_tflite_micro_bridge.h"

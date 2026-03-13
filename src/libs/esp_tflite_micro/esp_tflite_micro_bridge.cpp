@@ -10,10 +10,13 @@ extern "C" TFLiteEngine tflite_create(const uint8_t* model_data, uint8_t* arena,
     auto model = tflite::GetModel(model_data);
     
     // add the needed operators
-    static tflite::MicroMutableOpResolver<2> resolver;
-    // resolver.AddFullyConnected();
-    // resolver.AddSoftmax();
-    // resolver.AddConv2D(); // Add only what you need!
+    static tflite::MicroMutableOpResolver<6> resolver;
+    resolver.AddConv2D();
+    resolver.AddDepthwiseConv2D();
+    resolver.AddReshape();
+    resolver.AddAdd();
+    resolver.AddMul();
+    resolver.AddConcatenation();
 
     // create the interpreter
     auto* interpreter = new tflite::MicroInterpreter(
@@ -29,18 +32,19 @@ extern "C" TFLiteEngine tflite_create(const uint8_t* model_data, uint8_t* arena,
     return (void*)interpreter;
 }
 
-extern "C" void tflite_run(TFLiteEngine engine, const float* input, float* output) {
+extern "C" int tflite_invoke(void* engine) {
     auto* interpreter = static_cast<tflite::MicroInterpreter*>(engine);
-    
-    // copy input data into the model's input tensor
-    float* input_tensor = interpreter->input(0)->data.f;
-    input_tensor[0] = *input; 
+    return interpreter->Invoke();
+}
 
-    interpreter->Invoke();
+extern "C" void* tflite_get_input_ptr(void* engine, int index) {
+    auto* interpreter = static_cast<tflite::MicroInterpreter*>(engine);
+    return interpreter->input(index)->data.raw;
+}
 
-    // copy result to output pointer
-    float* output_tensor = interpreter->output(0)->data.f;
-    *output = output_tensor[0];
+extern "C" void* tflite_get_output_ptr(void* engine, int index) {
+    auto* interpreter = static_cast<tflite::MicroInterpreter*>(engine);
+    return interpreter->output(index)->data.raw;
 }
 
 extern "C" void tflite_destroy(TFLiteEngine engine) {

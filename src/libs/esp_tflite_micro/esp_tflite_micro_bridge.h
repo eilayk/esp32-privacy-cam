@@ -22,17 +22,9 @@ typedef void* TFLiteEngine;
 // - nullptr if tensor allocation fails.
 TFLiteEngine tflite_create(const uint8_t* model_data, uint8_t* arena, int arena_size);
 
-// Runs one inference.
-//
-// Current implementation expects:
-// - one float input value (written to input tensor index 0, element 0)
-// - one float output value (read from output tensor index 0, element 0)
-//
-// Parameters:
-// - engine: Opaque interpreter handle returned by tflite_create.
-// - input: Pointer to the input scalar.
-// - output: Pointer to where the output scalar will be written.
-void tflite_run(TFLiteEngine engine, const float* input, float* output);
+int tflite_invoke(void* engine);
+void* tflite_get_input_ptr(void* engine, int index);
+void* tflite_get_output_ptr(void* engine, int index);
 
 // Destroys an engine created by tflite_create. Safe to call with nullptr.
 void tflite_destroy(TFLiteEngine engine);

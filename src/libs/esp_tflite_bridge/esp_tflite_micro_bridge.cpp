@@ -55,6 +55,24 @@ extern "C" void* tflite_get_output_ptr(void* engine, int index) {
     return interpreter->output(index)->data.raw;
 }
 
+extern "C" int tflite_get_input_bytes(void* engine, int index) {
+    auto* interpreter = static_cast<tflite::MicroInterpreter*>(engine);
+    auto* tensor = interpreter->input(index);
+    if (tensor == nullptr) {
+        return -1;
+    }
+    return tensor->bytes;
+}
+
+extern "C" int tflite_get_output_bytes(void* engine, int index) {
+    auto* interpreter = static_cast<tflite::MicroInterpreter*>(engine);
+    auto* tensor = interpreter->output(index);
+    if (tensor == nullptr) {
+        return -1;
+    }
+    return tensor->bytes;
+}
+
 extern "C" void tflite_destroy(TFLiteEngine engine) {
     auto* interpreter = static_cast<tflite::MicroInterpreter*>(engine);
     delete interpreter;

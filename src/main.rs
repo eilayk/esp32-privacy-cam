@@ -21,6 +21,8 @@ fn main() -> anyhow::Result<()> {
     link_patches();
     EspLogger::initialize_default();
 
+    let mut model = face_detector::FaceDetector::new()?;
+
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
@@ -65,15 +67,18 @@ fn main() -> anyhow::Result<()> {
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
-    // create model
-    let mut model = face_detector::FaceDetector::new()?;
-
     loop {
         // Capture a frame from the camera
         if let Ok(frame) = camera.capture() {
 
-            let faces = model.detect_faces(&frame)?;
-            log::info!("Detected {} faces in the current frame", faces.len());
+            match model.detect_faces(&frame) {
+                Ok(faces) => {
+                    log::info!("Detected {} faces in the current frame", faces.len());
+                }
+                Err(e) => {
+                    log::error!("Face detection failed: {}", e);
+                }
+            }
 
             // Send the frame to the HTTP server thread
             let _ = tx.try_send(frame);

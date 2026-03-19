@@ -40,6 +40,10 @@ pub struct Frame {
 }
 
 impl Frame {
+    const MODEL_INPUT_WIDTH: usize = 128;
+    const MODEL_INPUT_HEIGHT: usize = 128;
+    const MODEL_INPUT_CHANNELS: usize = 3;
+
     pub fn data(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts((*self.fb).buf, (*self.fb).len) }
     }
@@ -58,15 +62,26 @@ impl Frame {
 
     pub fn decode_test(&self, out_buf: &mut Vec<u8>) -> anyhow::Result<()> {
         // input VGA (640x480)
-        // scale to 1/4 size (160x120) to save memory and processing time
-        // squeeze into 128x128 input for BlazeFace model 
+        // decode at 1/4 scale (~160x120) to reduce work, then center-crop and resize to 128x128.
+        let target_bytes = Self::MODEL_INPUT_WIDTH * Self::MODEL_INPUT_HEIGHT * Self::MODEL_INPUT_CHANNELS;
 
-        // create config for JPEG decoder
+        let scaled_width = self.width() / 4;
+        let scaled_height = self.height() / 4;
+        if scaled_width == 0 || scaled_height == 0 {
+            anyhow::bail!(
+                "Invalid scaled dimensions from frame {}x{}",
+                self.width(),
+                self.height()
+            );
+        }
+
+        let mut decode_buf = vec![0u8; scaled_width * scaled_height * Self::MODEL_INPUT_CHANNELS];
+
         let mut cfg = esp_jpeg_image_cfg_t {
             indata: self.data().as_ptr() as *mut u8,
             indata_size: self.length() as u32,
-            outbuf: out_buf.as_mut_ptr(),
-            outbuf_size: out_buf.capacity() as u32,
+            outbuf: decode_buf.as_mut_ptr(),
+            outbuf_size: decode_buf.len() as u32,
             out_format: esp_jpeg_image_format_t_JPEG_IMAGE_FORMAT_RGB888,
             out_scale: esp_jpeg_image_scale_t_JPEG_IMAGE_SCALE_1_4,
             flags: Default::default(),
@@ -74,18 +89,54 @@ impl Frame {
             priv_: Default::default(),
         };
 
-        // store output info (width, height) after decoding
         let mut out_info = esp_jpeg_image_output_t::default();
+        let res = unsafe { esp_jpeg_decode(&mut cfg, &mut out_info) };
+        if res != ESP_OK {
+            anyhow::bail!("Failed to decode JPEG: error code {}", res);
+        }
 
-        unsafe { 
-            // decode JPEG to RGB888 format in the provided output buffer
-            let res = esp_jpeg_decode(&mut cfg, &mut out_info); 
-            if res != ESP_OK {
-                anyhow::bail!("Failed to decode JPEG: error code {}", res);
+        let decoded_width = out_info.width as usize;
+        let decoded_height = out_info.height as usize;
+        if decoded_width == 0 || decoded_height == 0 {
+            anyhow::bail!("JPEG decoder returned invalid output size {}x{}", decoded_width, decoded_height);
+        }
+
+        let decoded_bytes = decoded_width
+            .checked_mul(decoded_height)
+            .and_then(|v| v.checked_mul(Self::MODEL_INPUT_CHANNELS))
+            .ok_or_else(|| anyhow::anyhow!("Decoded image size overflow"))?;
+
+        if decoded_bytes > decode_buf.len() {
+            anyhow::bail!(
+                "Decoded image larger than output buffer: {} > {}",
+                decoded_bytes,
+                decode_buf.len()
+            );
+        }
+
+        decode_buf.truncate(decoded_bytes);
+
+        if out_buf.len() != target_bytes {
+            out_buf.resize(target_bytes, 0);
+        }
+
+        let crop_size = decoded_width.min(decoded_height);
+        let crop_x = (decoded_width - crop_size) / 2;
+        let crop_y = (decoded_height - crop_size) / 2;
+
+        for dst_y in 0..Self::MODEL_INPUT_HEIGHT {
+            let src_y = crop_y + (dst_y * crop_size) / Self::MODEL_INPUT_HEIGHT;
+            for dst_x in 0..Self::MODEL_INPUT_WIDTH {
+                let src_x = crop_x + (dst_x * crop_size) / Self::MODEL_INPUT_WIDTH;
+
+                let src_idx = (src_y * decoded_width + src_x) * Self::MODEL_INPUT_CHANNELS;
+                let dst_idx = (dst_y * Self::MODEL_INPUT_WIDTH + dst_x) * Self::MODEL_INPUT_CHANNELS;
+
+                out_buf[dst_idx] = decode_buf[src_idx];
+                out_buf[dst_idx + 1] = decode_buf[src_idx + 1];
+                out_buf[dst_idx + 2] = decode_buf[src_idx + 2];
             }
-            // set output buffer length based on decoded image size (width * height * 3 for RGB888)
-            out_buf.set_len((out_info.width * out_info.height * 3) as usize);
-        };
+        }
 
         Ok(())
     }
@@ -147,7 +198,7 @@ impl Camera {
             frame_size: framesize_t_FRAMESIZE_VGA,
 
             jpeg_quality: 20,
-            fb_count: 4,
+            fb_count: 2,
             fb_location: camera_fb_location_t_CAMERA_FB_IN_PSRAM,
             grab_mode: camera_grab_mode_t_CAMERA_GRAB_LATEST,
             ..Default::default()

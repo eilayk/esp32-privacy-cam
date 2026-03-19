@@ -1,10 +1,13 @@
+/// Face detection using BlazeFace model with TensorFlow Lite
+/// input: JPEG image from camera (VGA 640x480)
+/// output: list of detected faces with bounding box and confidence score
+
 use crate::libs::{camera::Frame, esp_tflite_bridge::TFLiteEngine};
 use anyhow::Result;
 
 const MODEL_DATA: &[u8] = include_bytes!("models/face_detection_front_128_integer_quant.tflite");
 
-// Need 500kb 
-const TENSOR_ARENA_SIZE: usize = 512 * 1024;
+const TENSOR_ARENA_SIZE: usize = 640 * 1024;
 
 const NUM_BOXES: usize = 896;
 
@@ -35,16 +38,10 @@ impl FaceDetector {
         Ok(FaceDetector { model, rgb_buf })
     }
 
-    /// Converts 0..255 pixels to -128..127 quantized i8 values
-    fn preprocess_frame(&mut self, frame: &Frame, input_tensor: &mut [i8]) -> Result<()> {
+    fn preprocess_frame(&mut self, frame: &Frame) -> Result<()> {
         // input is JPEG(VGA)
         // BlazeFace expects 128x128 RGB
         frame.decode_test(&mut self.rgb_buf)?;
-
-        // BlazeFace Quantized expects: (pixel / 255.0 - 0.5) * 256
-        for (i, &pixel) in self.rgb_buf.iter().enumerate() {
-            input_tensor[i] = (pixel as i16 - 128) as i8;
-        }
         Ok(())
     }
 
@@ -79,16 +76,47 @@ impl FaceDetector {
 
     pub fn detect_faces(&mut self, frame: &Frame) -> Result<Vec<FaceDetection>> {
         // Preprocess the image data as needed by the model (e.g., resize, normalize)
-        let input_tensor = unsafe { self.model.input_tensor_mut::<i8>(0)? };
-        self.preprocess_frame(frame, input_tensor)?;
+        self.preprocess_frame(frame)?;
+
+        let input_tensor = self.model.input_tensor_i8_mut(0)?;
+
+        if input_tensor.len() < self.rgb_buf.len() {
+            anyhow::bail!(
+                "Input tensor too short: got {}, expected at least {}",
+                input_tensor.len(),
+                self.rgb_buf.len()
+            );
+        }
+
+        // BlazeFace Quantized expects: (pixel / 255.0 - 0.5) * 256
+        for (dst, &pixel) in input_tensor.iter_mut().zip(self.rgb_buf.iter()) {
+            *dst = (pixel as i16 - 128) as i8;
+        }
 
         // Run inference
         self.model.invoke()?;
 
-        // Output 0: Regressors [1, 896, 16] -> Bounding boxes and landmarks
-        // Output 1: Classifiers [1, 896, 1] -> Confidence scores
-        let boxes = unsafe { self.model.output_tensor::<f32>(0, NUM_BOXES * 16)? };
-        let scores = unsafe { self.model.output_tensor::<f32>(1, NUM_BOXES * 1)? };
+        // Some exports place scores at output 0 and boxes at output 1, others do the opposite.
+        // Detect by length to avoid hard-coding index order.
+        let out0 = self.model.output_tensor_f32(0)?;
+        let out1 = self.model.output_tensor_f32(1)?;
+
+        let boxes_len = NUM_BOXES * 16;
+        let scores_len = NUM_BOXES;
+
+        let (boxes, scores) = if out0.len() >= boxes_len && out1.len() >= scores_len {
+            (out0, out1)
+        } else if out1.len() >= boxes_len && out0.len() >= scores_len {
+            (out1, out0)
+        } else {
+            anyhow::bail!(
+                "Unexpected output tensor sizes: out0={}, out1={}, expected boxes>={} and scores>={}",
+                out0.len(),
+                out1.len(),
+                boxes_len,
+                scores_len
+            );
+        };
 
         let detections = self.decode_outputs(boxes, scores)?;
         Ok(detections)

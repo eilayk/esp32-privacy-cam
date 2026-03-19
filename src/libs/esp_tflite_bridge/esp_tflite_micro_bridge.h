@@ -25,6 +25,8 @@ TFLiteEngine tflite_create(const uint8_t* model_data, uint8_t* arena, int arena_
 int tflite_invoke(void* engine);
 void* tflite_get_input_ptr(void* engine, int index);
 void* tflite_get_output_ptr(void* engine, int index);
+int tflite_get_input_bytes(void* engine, int index);
+int tflite_get_output_bytes(void* engine, int index);
 
 // Destroys an engine created by tflite_create. Safe to call with nullptr.
 void tflite_destroy(TFLiteEngine engine);

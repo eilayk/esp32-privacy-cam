@@ -1,6 +1,7 @@
 #ifndef TFLITE_BRIDGE_H
 #define TFLITE_BRIDGE_H
 
+
 #ifdef __cplusplus
 extern "C" {
 #endif

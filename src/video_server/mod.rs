@@ -6,7 +6,7 @@ use esp_idf_svc::{
     io::Write,
 };
 
-use crate::libs::camera::Frame;
+use crate::types::JpegImage;
 
 pub struct VideoHttpServer<'a> {
     _server: EspHttpServer<'a>,
@@ -15,7 +15,10 @@ pub struct VideoHttpServer<'a> {
 const PAGE_HTML_BYTES: &[u8] = include_bytes!("page.html");
 
 impl<'a> VideoHttpServer<'a> {
-    pub fn new(rx: Receiver<Frame>) -> anyhow::Result<Self> {
+    pub fn new<T>(rx: Receiver<T>) -> anyhow::Result<Self>
+    where
+        T: JpegImage + Send + 'static,
+    {
         let server_config = http::server::Configuration::default();
 
         let mut http_server = EspHttpServer::new(&server_config)?;

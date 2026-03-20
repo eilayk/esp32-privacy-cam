@@ -17,6 +17,8 @@ use esp_idf_svc::{
     },
 };
 
+use crate::types::JpegImage;
+
 // pin mappings defined here
 // https://docs.freenove.com/projects/fnk0083/en/latest/fnk0083/codes/C/Preface.html#cam-pin
 pub struct CameraPins {
@@ -38,24 +40,24 @@ pub struct CameraPins {
 
 pub struct Camera;
 
-pub struct Frame {
+struct Frame {
     fb: *mut camera_fb_t,
 
     // Avoid deallocating the camera while frames are still in use.
     _camera: Arc<Camera>,
 }
 
-impl Frame {
-    pub fn data(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts((*self.fb).buf, (*self.fb).len) }
-    }
-
-    pub fn width(&self) -> usize {
+impl JpegImage for Frame {
+    fn width(&self) -> usize {
         unsafe { (*self.fb).width }
     }
 
-    pub fn height(&self) -> usize {
+    fn height(&self) -> usize {
         unsafe { (*self.fb).height }
+    }
+
+    fn data(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts((*self.fb).buf, (*self.fb).len) }
     }
 }
 
@@ -120,7 +122,7 @@ impl Camera {
         };
     }
 
-    pub fn capture(self: &Arc<Self>) -> anyhow::Result<Frame> {
+    pub fn capture(self: &Arc<Self>) -> anyhow::Result<impl JpegImage + Send + 'static> {
         let fb = unsafe { esp_camera_fb_get() };
         return if fb.is_null() {
             Err(anyhow::anyhow!("Failed to capture frame"))

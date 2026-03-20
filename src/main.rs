@@ -1,6 +1,6 @@
 use std::{thread, time::Duration};
 
-use crate::libs::camera::{Camera, CameraPins, Frame};
+use crate::libs::camera::{Camera, CameraPins};
 use crossbeam::channel::bounded;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -11,6 +11,7 @@ use esp_idf_svc::{
     wifi::{self, BlockingWifi, EspWifi},
 };
 mod libs;
+mod types;
 mod video_server;
 
 const SSID: &str = env!("WIFI_SSID");
@@ -55,7 +56,7 @@ fn main() -> anyhow::Result<()> {
     let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
     log::info!("Connected to WiFi! IP address: {}", ip_info.ip);
 
-    let (tx, rx) = bounded::<Frame>(1);
+    let (tx, rx) = bounded(1);
 
     // Start HTTP server
     log::info!("Starting HTTP server...");

@@ -32,9 +32,18 @@ struct EspDlDetectionRaw {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+/// Matches pedestrian_detect::detection_list_t in pedestrian_detect.h
 struct EspDlDetectionListRaw {
     items: *mut EspDlDetectionRaw,
     len: usize,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+/// Matches jpeg_img_t in dl_image_define.hpp
+struct EspDlJpegRaw {
+    data: *mut u8,
+    data_len: usize,
 }
 
 unsafe extern "C" {
@@ -53,7 +62,15 @@ unsafe extern "C" {
         input_image: *const EspDlImageRaw,
         out_result: *mut EspDlDetectionListRaw,
     ) -> esp_err_t;
+    fn pedestrian_detection_annotate_jpeg(
+        model: *mut c_void,
+        jpeg_data: *const u8,
+        jpeg_len: usize,
+        out_result: *mut EspDlDetectionListRaw,
+        out_jpeg: *mut EspDlJpegRaw,
+    ) -> esp_err_t;
     fn esp_dl_detection_list_free(result: *mut EspDlDetectionListRaw);
+    fn esp_dl_jpeg_free(jpeg: *mut EspDlJpegRaw);
 }
 
 pub struct EspDlImage {
@@ -177,6 +194,86 @@ impl PedestrianDetector {
         }
 
         Ok(detections)
+    }
+
+    pub fn detect_and_annotate<T: JpegImage + ?Sized>(&self, image: &T) -> Result<(Vec<Detection>, Vec<u8>)> {
+        let mut raw_list = EspDlDetectionListRaw {
+            items: core::ptr::null_mut(),
+            len: 0,
+        };
+        let mut raw_jpeg = EspDlJpegRaw {
+            data: core::ptr::null_mut(),
+            data_len: 0,
+        };
+
+        let err = unsafe {
+            pedestrian_detection_annotate_jpeg(
+                self.model.as_ptr(),
+                image.data().as_ptr(),
+                image.length(),
+                &mut raw_list,
+                &mut raw_jpeg,
+            )
+        };
+
+        if err != ESP_OK {
+            unsafe {
+                esp_dl_detection_list_free(&mut raw_list);
+                esp_dl_jpeg_free(&mut raw_jpeg);
+            }
+            return Err(anyhow!(
+                "pedestrian_detection_annotate_jpeg failed: {} ({})",
+                unsafe { cstr_to_str(esp_err_to_name(err) as *const c_void) },
+                err
+            ));
+        }
+
+        let detections = if raw_list.len == 0 {
+            Vec::new()
+        } else {
+            if raw_list.items.is_null() {
+                unsafe {
+                    esp_dl_detection_list_free(&mut raw_list);
+                    esp_dl_jpeg_free(&mut raw_jpeg);
+                }
+                return Err(anyhow!(
+                    "pedestrian_detection_annotate_jpeg returned null items with non-zero len ({})",
+                    raw_list.len
+                ));
+            }
+
+            unsafe {
+                let raw_slice = core::slice::from_raw_parts(raw_list.items, raw_list.len);
+                raw_slice
+                    .iter()
+                    .map(|raw| Detection {
+                        category: raw.category,
+                        score: raw.score,
+                        left: raw.left,
+                        top: raw.top,
+                        right: raw.right,
+                        bottom: raw.bottom,
+                    })
+                    .collect()
+            }
+        };
+
+        if raw_jpeg.data.is_null() || raw_jpeg.data_len == 0 {
+            unsafe {
+                esp_dl_detection_list_free(&mut raw_list);
+                esp_dl_jpeg_free(&mut raw_jpeg);
+            }
+            return Err(anyhow!("pedestrian_detection_annotate_jpeg returned empty JPEG output"));
+        }
+
+        let annotated_jpeg = unsafe { core::slice::from_raw_parts(raw_jpeg.data, raw_jpeg.data_len).to_vec() };
+
+        unsafe {
+            esp_dl_detection_list_free(&mut raw_list);
+            esp_dl_jpeg_free(&mut raw_jpeg);
+        }
+
+        Ok((detections, annotated_jpeg))
     }
 }
 

@@ -78,10 +78,31 @@ void destroy_pedestrian_detection_model(void *model);
 // - `out_result`: Pointer to the output detection list structure that will be filled with the detection results.
 esp_err_t pedestrian_detection(void *model, const esp_dl_image_t *input_image, esp_dl_detection_list_t *out_result);
 
+// Runs pedestrian detection on JPEG input, draws hollow rectangles around detections,
+// and re-encodes the annotated frame to JPEG.
+// The caller must free `out_result` with `esp_dl_detection_list_free()` and
+// `out_jpeg` with `esp_dl_jpeg_free()`.
+// Parameters:
+// - `model`: Pointer to the pedestrian detection model instance.
+// - `jpeg_data`: Pointer to input JPEG bytes.
+// - `jpeg_len`: Length of input JPEG bytes.
+// - `out_result`: Detection list output.
+// - `out_jpeg`: Annotated JPEG output.
+esp_err_t pedestrian_detection_annotate_jpeg(void *model,
+											 const uint8_t *jpeg_data,
+											 size_t jpeg_len,
+											 esp_dl_detection_list_t *out_result,
+											 esp_dl_jpeg_t *out_jpeg);
+
 // Frees detection list memory allocated by `pedestrian_detection()`.
 // Parameters:
 // - `result`: Pointer to the `esp_dl_detection_list_t` structure whose memory should be freed.
 void esp_dl_detection_list_free(esp_dl_detection_list_t *result);
+
+// Frees JPEG memory allocated by `pedestrian_detection_annotate_jpeg()`.
+// Parameters:
+// - `jpeg`: Pointer to the `esp_dl_jpeg_t` structure whose memory should be freed.
+void esp_dl_jpeg_free(esp_dl_jpeg_t *jpeg);
 
 #ifdef __cplusplus
 }

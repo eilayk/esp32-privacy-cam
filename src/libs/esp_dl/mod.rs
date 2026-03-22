@@ -143,19 +143,33 @@ impl PedestrianDetector {
             ));
         }
 
-        let detections = unsafe {
-            let raw_slice = core::slice::from_raw_parts(raw_list.items, raw_list.len);
-            raw_slice
-                .iter()
-                .map(|raw| Detection {
-                    category: raw.category,
-                    score: raw.score,
-                    left: raw.left,
-                    top: raw.top,
-                    right: raw.right,
-                    bottom: raw.bottom,
-                })
-                .collect()
+        let detections = if raw_list.len == 0 {
+            Vec::new()
+        } else {
+            if raw_list.items.is_null() {
+                unsafe {
+                    esp_dl_detection_list_free(&mut raw_list);
+                }
+                return Err(anyhow!(
+                    "pedestrian_detection returned null items with non-zero len ({})",
+                    raw_list.len
+                ));
+            }
+
+            unsafe {
+                let raw_slice = core::slice::from_raw_parts(raw_list.items, raw_list.len);
+                raw_slice
+                    .iter()
+                    .map(|raw| Detection {
+                        category: raw.category,
+                        score: raw.score,
+                        left: raw.left,
+                        top: raw.top,
+                        right: raw.right,
+                        bottom: raw.bottom,
+                    })
+                    .collect()
+            }
         };
 
         unsafe {

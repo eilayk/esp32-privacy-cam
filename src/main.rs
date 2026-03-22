@@ -1,9 +1,9 @@
 use std::{thread, time::Duration};
 
 use crate::{
-    libs::{camera::{Camera, CameraPins},
+    {libs::{camera::{Camera, CameraPins},
     types::{IntoTracked, Trace},
-}, esp_dl::PedestrianDetector};
+}, esp_dl::PedestrianDetector}, types::JpegImage};
 use crossbeam::channel::{bounded, TrySendError};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,

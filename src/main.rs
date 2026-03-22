@@ -1,6 +1,6 @@
 use std::{thread, time::Duration};
 
-use crate::libs::{camera::{Camera, CameraPins}, esp_dl::PedestrianDetector};
+use crate::{libs::{camera::{Camera, CameraPins}, esp_dl::PedestrianDetector}, types::JpegImage};
 use crossbeam::channel::bounded;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,

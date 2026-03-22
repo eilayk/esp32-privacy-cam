@@ -1,6 +1,6 @@
 use std::{thread, time::Duration};
 
-use crate::{libs::{camera::{Camera, CameraPins}, esp_dl::PedestrianDetector}, types::JpegImage};
+use crate::libs::{camera::{Camera, CameraPins}, esp_dl::PedestrianDetector};
 use crossbeam::channel::bounded;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -69,11 +69,11 @@ fn main() -> anyhow::Result<()> {
     loop {
         // Capture a frame from the camera
         if let Ok(frame) = camera.capture() {
-            let detections = person_detector.detect(&frame)?;
+            let (detections, annotated_jpeg) = person_detector.detect_and_annotate(&frame)?;
             log::info!("Detected {} pedestrians in the frame", detections.len());
 
-            // Send the frame to the HTTP server thread
-            let _ = tx.try_send(frame);
+            // Send the annotated JPEG frame to the HTTP server thread.
+            let _ = tx.try_send(annotated_jpeg);
         }
         thread::sleep(Duration::from_millis(10));
     }

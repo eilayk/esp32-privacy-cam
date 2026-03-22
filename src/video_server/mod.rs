@@ -6,8 +6,6 @@ use esp_idf_svc::{
     io::Write,
 };
 
-use crate::types::JpegImage;
-
 pub struct VideoHttpServer<'a> {
     _server: EspHttpServer<'a>,
 }
@@ -15,10 +13,7 @@ pub struct VideoHttpServer<'a> {
 const PAGE_HTML_BYTES: &[u8] = include_bytes!("page.html");
 
 impl<'a> VideoHttpServer<'a> {
-    pub fn new<T>(rx: Receiver<T>) -> anyhow::Result<Self>
-    where
-        T: JpegImage + Send + 'static,
-    {
+    pub fn new(rx: Receiver<Vec<u8>>) -> anyhow::Result<Self> {
         let server_config = http::server::Configuration::default();
 
         let mut http_server = EspHttpServer::new(&server_config)?;
@@ -37,15 +32,13 @@ impl<'a> VideoHttpServer<'a> {
 
             let mut len_buf = itoa::Buffer::new();
             while let Ok(frame) = rx.recv_timeout(Duration::from_secs(2)) {
-                let data = frame.data();
-
                 res.write_all(b"--frame\r\n")?;
                 res.write_all(b"Content-Type: image/jpeg\r\n")?;
                 res.write_all(b"Content-Length: ")?;
-                res.write_all(len_buf.format(data.len()).as_bytes())?;
+                res.write_all(len_buf.format(frame.len()).as_bytes())?;
                 res.write_all(b"\r\n\r\n")?;
 
-                res.write_all(&data)?;
+                res.write_all(&frame)?;
                 res.write_all(b"\r\n")?;
                 res.flush()?;
             }

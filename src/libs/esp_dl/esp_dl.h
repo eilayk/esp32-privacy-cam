@@ -62,16 +62,25 @@ esp_err_t esp_dl_decode_jpeg_rgb888(const uint8_t *jpeg_data, size_t jpeg_len, e
 void esp_dl_image_free(esp_dl_image_t *image);
 
 // Creates a pedestrian detection model instance. Destroy it with `destroy_pedestrian_detection_model()`.
+// Returns a pointer to the model instance, or null on failure.
 void *create_pedestrian_detection_model(void);
 
 // Destroys a pedestrian detection model instance created by `create_pedestrian_detection_model()`.
+// Parameters:
+// - `model`: Pointer to the model instance to destroy. If null, this function does nothing.
 void destroy_pedestrian_detection_model(void *model);
 
 // Runs pedestrian detection on the input image and writes detections to `out_result`.
 // The caller must free `out_result` with `esp_dl_detection_list_free()`.
+// Parameters:
+// - `model`: Pointer to the pedestrian detection model instance.
+// - `input_image`: Pointer to the input image structure containing the image data and metadata.
+// - `out_result`: Pointer to the output detection list structure that will be filled with the detection results.
 esp_err_t pedestrian_detection(void *model, const esp_dl_image_t *input_image, esp_dl_detection_list_t *out_result);
 
 // Frees detection list memory allocated by `pedestrian_detection()`.
+// Parameters:
+// - `result`: Pointer to the `esp_dl_detection_list_t` structure whose memory should be freed.
 void esp_dl_detection_list_free(esp_dl_detection_list_t *result);
 
 #ifdef __cplusplus

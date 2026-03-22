@@ -1,9 +1,9 @@
 use std::{thread, time::Duration};
 
-use crate::{
+use crate::
     {libs::{camera::{Camera, CameraPins},
     types::{IntoTracked, Trace},
-}, esp_dl::PedestrianDetector}, types::JpegImage};
+}, esp_dl::PedestrianDetector};
 use crossbeam::channel::{bounded, TrySendError};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -84,11 +84,11 @@ fn run_app() -> anyhow::Result<()> {
             trace.checkpoint("captured_frame");
             let traced_frame = frame.attach_trace(trace);
 
-            let detections = person_detector.detect(&frame)?;
+            let (detections, annotated_jpeg) = person_detector.detect_and_annotate(&frame)?;
             trace.checkpoint("inference_done");
 
             // Send the frame to the HTTP server thread
-            match tx.try_send(traced_frame) {
+            match tx.try_send(annotated_jpeg) {
                 Ok(_) => {
                     if dropped_frames > 0 {
                         log::info!(

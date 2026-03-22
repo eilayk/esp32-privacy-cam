@@ -1,6 +1,6 @@
 use std::{thread, time::Duration};
 
-use crate::libs::camera::{Camera, CameraPins};
+use crate::libs::{camera::{Camera, CameraPins}, esp_dl::PedestrianDetector};
 use crossbeam::channel::bounded;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -24,6 +24,8 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
+
+    let person_detector = PedestrianDetector::new()?;
 
     log::info!("Initializing camera...");
     let camera_pins = CameraPins {
@@ -67,6 +69,9 @@ fn main() -> anyhow::Result<()> {
     loop {
         // Capture a frame from the camera
         if let Ok(frame) = camera.capture() {
+            let detections = person_detector.detect(&frame)?;
+            log::info!("Detected {} pedestrians in the frame", detections.len());
+
             // Send the frame to the HTTP server thread
             let _ = tx.try_send(frame);
         }

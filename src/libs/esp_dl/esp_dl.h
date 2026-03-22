@@ -1,0 +1,79 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+	uint8_t *data;
+	size_t data_len;
+	uint16_t width;
+	uint16_t height;
+	uint32_t pix_type;
+	size_t stride;
+} esp_dl_image_t;
+
+typedef struct {
+	int32_t category;
+	float score;
+	int32_t left;
+	int32_t top;
+	int32_t right;
+	int32_t bottom;
+} esp_dl_detection_t;
+
+typedef struct {
+	esp_dl_detection_t *items;
+	size_t len;
+} esp_dl_detection_list_t;
+
+typedef struct {
+	uint8_t *data;
+	size_t data_len;
+} esp_dl_jpeg_t;
+
+// Matches dl::image::pix_type_t::DL_IMAGE_PIX_TYPE_RGB888
+#define ESP_DL_PIX_TYPE_RGB888 0u
+
+// Decode JPEG data to RGB888 format. The caller is responsible for freeing the output image data using `esp_dl_image_free()`.
+// Parameters:
+// - `jpeg_data`: Pointer to the input JPEG data.
+// - `jpeg_len`: Length of the input JPEG data in bytes.
+// - `out_image`: Pointer to the output image structure that will be filled with the decoded
+//   image data and metadata (width, height, pixel type, etc.).
+// Returns:
+// - `ESP_OK` on success.
+// - `ESP_ERR_INVALID_ARG` if any of the input parameters are invalid (e.g., null pointers, zero length).
+// - `ESP_FAIL` if the decoding process fails (e.g., due to invalid JPEG data).
+esp_err_t esp_dl_decode_jpeg_rgb888(const uint8_t *jpeg_data, size_t jpeg_len, esp_dl_image_t *out_image);
+
+// Free the memory allocated for the image data in the given `esp_dl_image_t` structure.
+// This function should be called to release the memory when the image data is no longer needed.
+// Parameters:
+// - `image`: Pointer to the `esp_dl_image_t` structure whose image data should be freed. 
+//    The structure itself will not be freed, only the memory allocated for the image data. 
+//    After calling this function, the `data` pointer in the structure will be set to null
+//    and other fields will be reset to zero.
+void esp_dl_image_free(esp_dl_image_t *image);
+
+// Creates a pedestrian detection model instance. Destroy it with `destroy_pedestrian_detection_model()`.
+void *create_pedestrian_detection_model(void);
+
+// Destroys a pedestrian detection model instance created by `create_pedestrian_detection_model()`.
+void destroy_pedestrian_detection_model(void *model);
+
+// Runs pedestrian detection on the input image and writes detections to `out_result`.
+// The caller must free `out_result` with `esp_dl_detection_list_free()`.
+esp_err_t pedestrian_detection(void *model, const esp_dl_image_t *input_image, esp_dl_detection_list_t *out_result);
+
+// Frees detection list memory allocated by `pedestrian_detection()`.
+void esp_dl_detection_list_free(esp_dl_detection_list_t *result);
+
+#ifdef __cplusplus
+}
+#endif

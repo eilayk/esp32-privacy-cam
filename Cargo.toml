@@ -34,6 +34,19 @@ remote_component = { name = "espressif/esp32-camera", version = "2.1.5" }
 bindings_header = "src/libs/bindings.h"
 bindings_module = "camera"
 
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp-dl", version = "3.2.0" }
+bindings_header = "src/libs/bindings.h"
+bindings_module = "dl"
+
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/pedestrian_detect", version = "0.3.0" }
+bindings_header = "src/libs/bindings.h"
+bindings_module = "pedestrian_detect"
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["src/libs/esp_dl"]
+
 # --- Optional Embassy Integration ---
 # esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
 

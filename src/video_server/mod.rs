@@ -14,7 +14,7 @@ use esp_idf_svc::{
     ws::FrameType,
 };
 
-use crate::types::JpegImage;
+use crate::types::{JpegImage, TrackedImage};
 
 pub struct VideoHttpServer<'a> {
     _server: EspHttpServer<'a>,
@@ -24,11 +24,14 @@ const PAGE_HTML_BYTES: &[u8] = include_bytes!("page.html");
 const MAX_WS_SESSIONS: usize = 4;
 
 impl<'a> VideoHttpServer<'a> {
-    pub fn new<T>(rx: Receiver<T>) -> anyhow::Result<Self>
+    pub fn new<T>(rx: Receiver<TrackedImage<T>>) -> anyhow::Result<Self>
     where
         T: JpegImage + Send + 'static,
     {
         let server_config = http::server::Configuration::default();
+        let latest_trace = Arc::new(Mutex::new(String::from(
+            "{\"steps\":[],\"total_ms\":0.0,\"fps\":0.0}",
+        )));
 
         let mut http_server = EspHttpServer::new(&server_config)?;
 

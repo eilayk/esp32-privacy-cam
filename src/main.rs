@@ -17,13 +17,22 @@ mod video_server;
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
-fn main() -> anyhow::Result<()> {
+fn run_app() -> anyhow::Result<()> {
     link_patches();
     EspLogger::initialize_default();
 
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
+
+    log::info!("Connecting to WiFi network '{}'...", SSID);
+    let mut wifi = BlockingWifi::wrap(
+        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?,
+        sys_loop,
+    )?;
+    connect_wifi(&mut wifi)?;
+    let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
+    log::info!("Connected to WiFi! IP address: {}", ip_info.ip);
 
     log::info!("Initializing camera...");
     let camera_pins = CameraPins {
@@ -46,16 +55,6 @@ fn main() -> anyhow::Result<()> {
     let camera = Camera::init(camera_pins)?;
     log::info!("Camera initialized successfully!");
 
-    // Start wifi
-    log::info!("Connecting to WiFi network '{}'...", SSID);
-    let mut wifi = BlockingWifi::wrap(
-        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?,
-        sys_loop,
-    )?;
-    connect_wifi(&mut wifi)?;
-    let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
-    log::info!("Connected to WiFi! IP address: {}", ip_info.ip);
-
     let (tx, rx) = bounded(1);
 
     // Start HTTP server
@@ -75,21 +74,31 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()> {
-    let wifi_config: wifi::Configuration = wifi::Configuration::Client(wifi::ClientConfiguration {
-        ssid: SSID
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("SSID must be a valid UTF-8 string"))?,
-        password: PASSWORD
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Password must be a valid UTF-8 string"))?,
-        // protocol_softap: wifi::Protocol::P80211BGN,
+    let wifi_config = wifi::Configuration::Client(wifi::ClientConfiguration {
+        ssid: SSID.try_into().unwrap(),
+        password: PASSWORD.try_into().unwrap(),
+        auth_method: wifi::AuthMethod::WPA2Personal,
         ..Default::default()
     });
 
+    log::info!("Setting WiFi configuration...");
     wifi.set_configuration(&wifi_config)?;
+
+    log::info!("Starting WiFi...");
     wifi.start()?;
+
+    log::info!("Connecting to WiFi...");
     wifi.connect()?;
+
+    log::info!("Waiting for IP address (DHCP)...");
     wifi.wait_netif_up()?;
 
     Ok(())
 }
+
+fn main() {
+    if let Err(err) = run_app() {
+        log::error!("Application error: {:?}", err);
+    }
+}
+

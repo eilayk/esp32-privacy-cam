@@ -27,22 +27,27 @@ const MAX_WS_SESSIONS: usize = 4;
 /// [4 bytes: trace_json_length (u32 little-endian)]
 /// [N bytes: trace JSON string (UTF-8)]
 /// [remaining bytes: JPEG image data]
-fn encode_frame_with_trace(jpeg_data: &[u8], trace_json: &str) -> Vec<u8> {
+///
+/// Reuses the provided buffer to avoid allocations.
+fn encode_frame_with_trace(buffer: &mut Vec<u8>, jpeg_data: &[u8], trace_json: &str) {
     let trace_bytes = trace_json.as_bytes();
     let trace_len = trace_bytes.len() as u32;
-    
-    let mut encoded = Vec::with_capacity(4 + trace_bytes.len() + jpeg_data.len());
-    
+
+    // Clear buffer and reserve capacity if needed
+    buffer.clear();
+    let required_capacity = 4 + trace_bytes.len() + jpeg_data.len();
+    if buffer.capacity() < required_capacity {
+        buffer.reserve(required_capacity - buffer.capacity());
+    }
+
     // Write trace length as u32 little-endian
-    encoded.extend_from_slice(&trace_len.to_le_bytes());
-    
+    buffer.extend_from_slice(&trace_len.to_le_bytes());
+
     // Write trace JSON
-    encoded.extend_from_slice(trace_bytes);
-    
+    buffer.extend_from_slice(trace_bytes);
+
     // Write JPEG data
-    encoded.extend_from_slice(jpeg_data);
-    
-    encoded
+    buffer.extend_from_slice(jpeg_data);
 }
 
 impl<'a> VideoHttpServer<'a> {
@@ -63,10 +68,14 @@ impl<'a> VideoHttpServer<'a> {
         thread::Builder::new()
             .name("ws-frame-broadcaster".into())
             .spawn(move || {
+                // Reusable buffers to avoid allocations per frame
+                let mut encode_buffer = Vec::with_capacity(64 * 1024); // 64KB for encoded frame
+                let mut json_buffer = String::with_capacity(512); // ~512 bytes for trace JSON
+
                 while let Ok(frame) = rx.recv() {
-                    let trace_json = frame.trace.to_json();
+                    frame.trace.write_json(&mut json_buffer);
                     let jpeg_data = frame.data();
-                    let encoded_data = encode_frame_with_trace(jpeg_data, &trace_json);
+                    encode_frame_with_trace(&mut encode_buffer, jpeg_data, &json_buffer);
 
                     let mut sessions = match send_sessions.lock() {
                         Ok(guard) => guard,
@@ -77,7 +86,7 @@ impl<'a> VideoHttpServer<'a> {
                     };
 
                     sessions.retain_mut(|sender| {
-                        match sender.send(FrameType::Binary(false), &encoded_data) {
+                        match sender.send(FrameType::Binary(false), &encode_buffer) {
                             Ok(_) => true,
                             Err(err) => {
                                 log::warn!(

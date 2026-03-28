@@ -52,9 +52,18 @@ impl Trace {
         self.last_elapsed
     }
 
-    /// Serialize trace to JSON format for transmission to browser
+    /// Serialize trace to JSON format.
     pub fn to_json(&self) -> String {
-        let mut json = String::from("{\"steps\":[");
+        let mut json = String::with_capacity(256);
+        self.write_json(&mut json);
+        json
+    }
+
+    /// Serialize trace to JSON format, writing into provided buffer.
+    /// Reuses the buffer to avoid allocations.
+    pub fn write_json(&self, json: &mut String) {
+        json.clear();
+        json.push_str("{\"steps\":[");
 
         for (i, (label, duration)) in self.steps.iter().enumerate() {
             if i > 0 {
@@ -62,7 +71,7 @@ impl Trace {
             }
             let duration_ms = duration.as_secs_f64() * 1000.0;
             let _ = write!(
-                &mut json,
+                json,
                 "{{\"label\":\"{}\",\"duration_ms\":{:.3}}}",
                 label, duration_ms
             );
@@ -70,9 +79,7 @@ impl Trace {
 
         json.push_str("],\"total_ms\":");
         let total_ms = self.total_elapsed().as_secs_f64() * 1000.0;
-        let _ = write!(&mut json, "{:.3}}}", total_ms);
-
-        json
+        let _ = write!(json, "{:.3}}}", total_ms);
     }
 }
 
@@ -103,4 +110,3 @@ pub trait IntoTracked: JpegImage + Sized {
 }
 
 impl<T: JpegImage> IntoTracked for T {}
-

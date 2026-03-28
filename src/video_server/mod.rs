@@ -4,6 +4,7 @@ use crossbeam::channel::Receiver;
 use esp_idf_svc::{
     http::{self, server::EspHttpServer, Method},
     io::Write,
+    ws::FrameType,
 };
 
 use crate::types::JpegImage;
@@ -22,33 +23,40 @@ impl<'a> VideoHttpServer<'a> {
         let server_config = http::server::Configuration::default();
 
         let mut http_server = EspHttpServer::new(&server_config)?;
+
+        // Serve the HTML page
         http_server.fn_handler("/", Method::Get, |req| {
             req.into_ok_response()?
                 .write_all(PAGE_HTML_BYTES)
                 .map(|_| ())
         })?;
 
-        http_server.fn_handler("/stream", Method::Get, move |req| -> anyhow::Result<()> {
-            let mut res = req.into_response(
-                200,
-                None,
-                &[("Content-Type", "multipart/x-mixed-replace; boundary=frame")],
-            )?;
+        // WebSocket handler for video stream
+        http_server.ws_handler("/ws", move |ws| -> anyhow::Result<()> {
+            if ws.is_new() {
+                log::info!("New WebSocket connection, session: {}", ws.session());
+                return Ok(());
+            }
 
-            let mut len_buf = itoa::Buffer::new();
-            while let Ok(frame) = rx.recv_timeout(Duration::from_secs(2)) {
+            if ws.is_closed() {
+                log::info!("WebSocket connection closed, session: {}", ws.session());
+                return Ok(());
+            }
+
+            // Receive JPEG frames from the channel and send them over WebSocket
+            while let Ok(frame) = rx.recv_timeout(Duration::from_millis(100)) {
                 let data = frame.data();
 
-                res.write_all(b"--frame\r\n")?;
-                res.write_all(b"Content-Type: image/jpeg\r\n")?;
-                res.write_all(b"Content-Length: ")?;
-                res.write_all(len_buf.format(data.len()).as_bytes())?;
-                res.write_all(b"\r\n\r\n")?;
-
-                res.write_all(&data)?;
-                res.write_all(b"\r\n")?;
-                res.flush()?;
+                // Send JPEG frame as binary WebSocket message
+                match ws.send(FrameType::Binary(false), data) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::warn!("Failed to send WebSocket frame: {:?}", e);
+                        break;
+                    }
+                }
             }
+
             Ok(())
         })?;
 

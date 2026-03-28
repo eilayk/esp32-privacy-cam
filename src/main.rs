@@ -1,6 +1,9 @@
 use std::{thread, time::Duration};
 
-use crate::{libs::camera::{Camera, CameraPins}, types::IntoTracked};
+use crate::{
+    libs::camera::{Camera, CameraPins},
+    types::IntoTracked,
+};
 use crossbeam::channel::bounded;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -67,8 +70,7 @@ fn run_app() -> anyhow::Result<()> {
         // Capture a frame from the camera
         if let Ok(frame) = camera.capture() {
             let mut traced_frame = frame.with_trace();
-            traced_frame.trace.checkpoint("captured");
-            traced_frame.trace.checkpoint("queued_for_stream");
+            traced_frame.trace.checkpoint("raw_capture");
 
             // Send the frame to the HTTP server thread
             let _ = tx.try_send(traced_frame);
@@ -105,4 +107,3 @@ fn main() {
         log::error!("Application error: {:?}", err);
     }
 }
-

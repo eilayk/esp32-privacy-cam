@@ -73,6 +73,7 @@ impl<'a> VideoHttpServer<'a> {
                 let mut json_buffer = String::with_capacity(512); // ~512 bytes for trace JSON
 
                 while let Ok(frame) = rx.recv() {
+                    frame.trace.checkpoint("http_server_send");
                     frame.trace.write_json(&mut json_buffer);
                     let jpeg_data = frame.data();
                     encode_frame_with_trace(&mut encode_buffer, jpeg_data, &json_buffer);

@@ -163,12 +163,81 @@
         const canvas = document.getElementById('stream');
         const ctx = canvas.getContext('2d');
         const statusEl = document.getElementById('status');
+        const fpsEl = document.getElementById('fps');
+        const totalMsEl = document.getElementById('total-ms');
+        const traceRowsEl = document.getElementById('trace-rows');
+        
         let ws = null;
         let isInit = false;
+        
+        // FPS calculation
+        let frameTimestamps = [];
+        const FPS_WINDOW_SIZE = 30;
 
         function updateStatus(text, state) {
             statusEl.textContent = text;
             statusEl.className = 'status ' + state;
+        }
+        
+        function calculateFPS() {
+            if (frameTimestamps.length < 2) return 0;
+            
+            const timeSpan = frameTimestamps[frameTimestamps.length - 1] - frameTimestamps[0];
+            const fps = (frameTimestamps.length - 1) / (timeSpan / 1000);
+            return fps;
+        }
+        
+        function updateTraceMetrics(traceData) {
+            // Update FPS
+            const fps = calculateFPS();
+            fpsEl.textContent = fps.toFixed(2);
+            
+            // Update total time
+            totalMsEl.textContent = traceData.total_ms.toFixed(3);
+            
+            // Update trace steps table
+            traceRowsEl.innerHTML = '';
+            
+            if (traceData.steps && traceData.steps.length > 0) {
+                traceData.steps.forEach(step => {
+                    const row = document.createElement('tr');
+                    
+                    const labelCell = document.createElement('td');
+                    labelCell.textContent = step.label;
+                    row.appendChild(labelCell);
+                    
+                    const durationCell = document.createElement('td');
+                    durationCell.textContent = step.duration_ms.toFixed(3);
+                    row.appendChild(durationCell);
+                    
+                    traceRowsEl.appendChild(row);
+                });
+            } else {
+                const row = document.createElement('tr');
+                row.className = 'empty-row';
+                const cell = document.createElement('td');
+                cell.colSpan = 2;
+                cell.textContent = 'No trace steps recorded';
+                row.appendChild(cell);
+                traceRowsEl.appendChild(row);
+            }
+        }
+        
+        function decodeFrameMessage(arrayBuffer) {
+            // Read trace JSON length (first 4 bytes, u32 little-endian)
+            const view = new DataView(arrayBuffer);
+            const traceLength = view.getUint32(0, true); // true = little-endian
+            
+            // Extract trace JSON
+            const traceBytes = new Uint8Array(arrayBuffer, 4, traceLength);
+            const traceJson = new TextDecoder().decode(traceBytes);
+            const traceData = JSON.parse(traceJson);
+            
+            // Extract JPEG data
+            const jpegOffset = 4 + traceLength;
+            const jpegData = arrayBuffer.slice(jpegOffset);
+            
+            return { traceData, jpegData };
         }
 
         function connect() {
@@ -186,8 +255,21 @@
             };
 
             ws.onmessage = (event) => {
-                // Receive binary JPEG data
-                const blob = new Blob([event.data], { type: 'image/jpeg' });
+                // Track frame arrival time for FPS calculation
+                const now = performance.now();
+                frameTimestamps.push(now);
+                if (frameTimestamps.length > FPS_WINDOW_SIZE) {
+                    frameTimestamps.shift();
+                }
+                
+                // Decode the binary message
+                const { traceData, jpegData } = decodeFrameMessage(event.data);
+                
+                // Update trace metrics
+                updateTraceMetrics(traceData);
+                
+                // Render JPEG frame
+                const blob = new Blob([jpegData], { type: 'image/jpeg' });
                 const url = URL.createObjectURL(blob);
                 
                 const img = new Image();

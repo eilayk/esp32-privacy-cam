@@ -23,15 +23,34 @@ pub struct VideoHttpServer<'a> {
 const PAGE_HTML_BYTES: &[u8] = include_bytes!("page.html");
 const MAX_WS_SESSIONS: usize = 4;
 
+/// Encode a frame with its trace data into a binary format:
+/// [4 bytes: trace_json_length (u32 little-endian)]
+/// [N bytes: trace JSON string (UTF-8)]
+/// [remaining bytes: JPEG image data]
+fn encode_frame_with_trace(jpeg_data: &[u8], trace_json: &str) -> Vec<u8> {
+    let trace_bytes = trace_json.as_bytes();
+    let trace_len = trace_bytes.len() as u32;
+    
+    let mut encoded = Vec::with_capacity(4 + trace_bytes.len() + jpeg_data.len());
+    
+    // Write trace length as u32 little-endian
+    encoded.extend_from_slice(&trace_len.to_le_bytes());
+    
+    // Write trace JSON
+    encoded.extend_from_slice(trace_bytes);
+    
+    // Write JPEG data
+    encoded.extend_from_slice(jpeg_data);
+    
+    encoded
+}
+
 impl<'a> VideoHttpServer<'a> {
     pub fn new<T>(rx: Receiver<TrackedImage<T>>) -> anyhow::Result<Self>
     where
         T: JpegImage + Send + 'static,
     {
         let server_config = http::server::Configuration::default();
-        let latest_trace = Arc::new(Mutex::new(String::from(
-            "{\"steps\":[],\"total_ms\":0.0,\"fps\":0.0}",
-        )));
 
         let mut http_server = EspHttpServer::new(&server_config)?;
 
@@ -45,7 +64,9 @@ impl<'a> VideoHttpServer<'a> {
             .name("ws-frame-broadcaster".into())
             .spawn(move || {
                 while let Ok(frame) = rx.recv() {
-                    let data = frame.data();
+                    let trace_json = frame.trace.to_json();
+                    let jpeg_data = frame.data();
+                    let encoded_data = encode_frame_with_trace(jpeg_data, &trace_json);
 
                     let mut sessions = match send_sessions.lock() {
                         Ok(guard) => guard,
@@ -56,7 +77,7 @@ impl<'a> VideoHttpServer<'a> {
                     };
 
                     sessions.retain_mut(|sender| {
-                        match sender.send(FrameType::Binary(false), data) {
+                        match sender.send(FrameType::Binary(false), &encoded_data) {
                             Ok(_) => true,
                             Err(err) => {
                                 log::warn!(

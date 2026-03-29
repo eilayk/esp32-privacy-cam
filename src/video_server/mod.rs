@@ -72,21 +72,27 @@ impl<'a> VideoHttpServer<'a> {
                 let mut encode_buffer = Vec::with_capacity(64 * 1024); // 64KB for encoded frame
                 let mut json_buffer = String::with_capacity(512); // ~512 bytes for trace JSON
 
-                while let Ok(frame) = rx.recv() {
+                while let Ok(mut frame) = rx.recv() {
                     frame.trace.checkpoint("http_server_send");
                     frame.trace.write_json(&mut json_buffer);
                     let jpeg_data = frame.data();
                     encode_frame_with_trace(&mut encode_buffer, jpeg_data, &json_buffer);
 
-                    let mut sessions = match send_sessions.lock() {
-                        Ok(guard) => guard,
+                    // Replace-with-empty pattern
+                    // Replaces the sessions vector with an empty one
+                    // This prevents holding the lock while sending frames
+
+                    // Take sessions out of the mutex to avoid holding lock during I/O
+                    let mut current_sessions = match send_sessions.lock() {
+                        Ok(mut guard) => std::mem::take(&mut *guard),
                         Err(err) => {
                             log::error!("WebSocket session lock poisoned: {:?}", err);
                             return;
                         }
                     };
 
-                    sessions.retain_mut(|sender| {
+                    // Send to all sessions
+                    current_sessions.retain_mut(|sender| {
                         match sender.send(FrameType::Binary(false), &encode_buffer) {
                             Ok(_) => true,
                             Err(err) => {
@@ -99,6 +105,15 @@ impl<'a> VideoHttpServer<'a> {
                             }
                         }
                     });
+
+                    // Put the filtered sessions back
+                    match send_sessions.lock() {
+                        Ok(mut guard) => *guard = current_sessions,
+                        Err(err) => {
+                            log::error!("WebSocket session lock poisoned: {:?}", err);
+                            return;
+                        }
+                    }
                 }
 
                 log::warn!("Frame channel closed; websocket broadcaster exiting");

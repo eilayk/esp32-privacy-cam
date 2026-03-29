@@ -125,6 +125,11 @@
             align-items: center;
         }
 
+        .btn-group {
+            display: flex;
+            gap: 8px;
+        }
+
         .reset-btn {
             background: #333;
             border: none;
@@ -192,7 +197,10 @@
         <section class="trace-panel" aria-live="polite">
             <div class="trace-title">
                 <span>Performance Metrics</span>
-                <button class="reset-btn" onclick="stats.reset()">Reset Stats</button>
+                <div class="btn-group">
+                    <button class="reset-btn" onclick="stats.copy(event)">Copy Stats</button>
+                    <button class="reset-btn" onclick="stats.reset()">Reset Stats</button>
+                </div>
             </div>
             
             <div class="trace-grid">
@@ -282,6 +290,42 @@
                 };
                 
                 if (this.els.rows) this.els.rows.innerHTML = '<tr class="empty-row"><td colspan="4">Waiting for trace data...</td></tr>';
+            }
+
+            copy(event) {
+                const data = {
+                    summary: {
+                        frameCount: this.frameCount,
+                        totalBytes: this.totalBytes,
+                        droppedFrames: this.droppedFrames,
+                        avgFps: parseFloat(this.metrics.fps.avg.toFixed(2)),
+                        maxFps: parseFloat(this.metrics.fps.max.toFixed(2)),
+                        avgLatencyMs: parseFloat(this.metrics.latency.avg.toFixed(2)),
+                        maxLatencyMs: parseFloat(this.metrics.latency.max.toFixed(2)),
+                        avgThroughputKbs: parseFloat(this.metrics.throughput.cur.toFixed(2)),
+                        avgFrameSizeKb: parseFloat(this.metrics.frameSize.avg.toFixed(2)),
+                    },
+                    steps: this.metrics.steps,
+                    timestamp: new Date().toISOString()
+                };
+                const json = JSON.stringify(data, null, 2);
+                const btn = event.currentTarget;
+                const originalText = btn.textContent;
+                
+                navigator.clipboard.writeText(json).then(() => {
+                    btn.textContent = 'Copied!';
+                    btn.style.backgroundColor = '#50fa7b';
+                    btn.style.color = '#000';
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.style.backgroundColor = '';
+                        btn.style.color = '';
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy stats: ', err);
+                    btn.textContent = 'Error!';
+                    setTimeout(() => btn.textContent = originalText, 2000);
+                });
             }
 
             recordFrame(traceData, jpegSize) {

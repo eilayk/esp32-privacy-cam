@@ -58,9 +58,7 @@ fn run_app() -> anyhow::Result<()> {
     let camera = Camera::init(camera_pins)?;
     log::info!("Camera initialized successfully!");
 
-    // Increased queue capacity from 1 to 16 to buffer transmission jitter
-    // and reduce frame drops when WebSocket clients are temporarily slow
-    let (tx, rx) = bounded(16);
+    let (tx, rx) = bounded(2);
 
     // Start HTTP server
     log::info!("Starting HTTP server...");
@@ -173,7 +171,7 @@ fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()>
         // Exponential backoff: 1s, 2s, 4s, 8s, 16s... up to ~30s max
         let delay_secs = (2u64.pow(retry_count)).min(30);
         let delay = Duration::from_secs(delay_secs);
-        
+
         log::info!("Retrying in {:?}...", delay);
         let _ = wifi.disconnect();
         thread::sleep(delay);

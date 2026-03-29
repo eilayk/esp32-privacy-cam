@@ -108,9 +108,9 @@ impl<'a> VideoHttpServer<'a> {
                         }
                     });
 
-                    // Put the filtered sessions back
+                    // Put the filtered sessions back, merging with any new ones that connected
                     match send_sessions.lock() {
-                        Ok(mut guard) => *guard = current_sessions,
+                        Ok(mut guard) => guard.append(&mut current_sessions),
                         Err(err) => {
                             log::error!("WebSocket session lock poisoned: {:?}", err);
                             return;

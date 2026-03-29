@@ -105,8 +105,8 @@ impl Camera {
             pixel_format: pixformat_t_PIXFORMAT_JPEG,
             frame_size: framesize_t_FRAMESIZE_VGA,
 
-            jpeg_quality: 20,
-            fb_count: 4,
+            jpeg_quality: 30,
+            fb_count: 8,
             fb_location: camera_fb_location_t_CAMERA_FB_IN_PSRAM,
             grab_mode: camera_grab_mode_t_CAMERA_GRAB_LATEST,
             ..Default::default()

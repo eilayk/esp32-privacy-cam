@@ -312,7 +312,7 @@
                 const btn = event.currentTarget;
                 const originalText = btn.textContent;
                 
-                navigator.clipboard.writeText(json).then(() => {
+                const success = () => {
                     btn.textContent = 'Copied!';
                     btn.style.backgroundColor = '#50fa7b';
                     btn.style.color = '#000';
@@ -321,11 +321,33 @@
                         btn.style.backgroundColor = '';
                         btn.style.color = '';
                     }, 2000);
-                }).catch(err => {
+                };
+
+                const failure = (err) => {
                     console.error('Failed to copy stats: ', err);
                     btn.textContent = 'Error!';
                     setTimeout(() => btn.textContent = originalText, 2000);
-                });
+                };
+
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(json).then(success).catch(failure);
+                } else {
+                    try {
+                        const textArea = document.createElement("textarea");
+                        textArea.value = json;
+                        textArea.style.position = "fixed";
+                        textArea.style.left = "-9999px";
+                        textArea.style.top = "-9999px";
+                        document.body.appendChild(textArea);
+                        textArea.focus();
+                        textArea.select();
+                        const successful = document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        if (successful) success(); else failure('Fallback copy failed');
+                    } catch (err) {
+                        failure(err);
+                    }
+                }
             }
 
             recordFrame(traceData, jpegSize) {
@@ -425,7 +447,8 @@
             }
         }
 
-        const stats = new PerformanceStats();
+        var stats = new PerformanceStats();
+        window.stats = stats;
         let ws = null;
         let isInit = false;
         

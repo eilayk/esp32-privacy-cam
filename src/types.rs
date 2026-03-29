@@ -107,6 +107,10 @@ pub trait IntoTracked: JpegImage + Sized {
             trace: Trace::start(),
         }
     }
+
+    fn attach_trace(self, trace: Trace) -> TrackedImage<Self> {
+        TrackedImage { image: self, trace }
+    }
 }
 
 impl<T: JpegImage> IntoTracked for T {}

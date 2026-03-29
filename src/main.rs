@@ -4,7 +4,7 @@ use crate::{
     libs::camera::{Camera, CameraPins},
     types::IntoTracked,
 };
-use crossbeam::channel::bounded;
+use crossbeam::channel::{bounded, TrySendError};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::prelude::Peripherals,
@@ -66,6 +66,8 @@ fn run_app() -> anyhow::Result<()> {
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
+    let mut dropped_frames: u32 = 0;
+
     loop {
         // Capture a frame from the camera
         if let Ok(frame) = camera.capture() {
@@ -73,10 +75,35 @@ fn run_app() -> anyhow::Result<()> {
             traced_frame.trace.checkpoint("raw_capture");
 
             // Send the frame to the HTTP server thread
-            let _ = tx.try_send(traced_frame);
+            match tx.try_send(traced_frame) {
+                Ok(_) => {
+                    if dropped_frames > 0 {
+                        log::info!(
+                            "Frame queue recovered after dropping {} frame(s)",
+                            dropped_frames
+                        );
+                        dropped_frames = 0;
+                    }
+                }
+                Err(TrySendError::Full(_)) => {
+                    dropped_frames = dropped_frames.saturating_add(1);
+                    if dropped_frames == 1 || dropped_frames % 100 == 0 {
+                        log::warn!(
+                            "Frame queue is full; dropping frame(s), dropped_count={}",
+                            dropped_frames
+                        );
+                    }
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    log::error!("Frame queue disconnected; stopping capture loop");
+                    break;
+                }
+            }
         }
         thread::sleep(Duration::from_millis(10));
     }
+
+    Ok(())
 }
 
 fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()> {
@@ -92,6 +119,12 @@ fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()>
 
     log::info!("Starting WiFi...");
     wifi.start()?;
+
+    // flush any existing WiFi state
+    if wifi.is_connected()? {
+        log::info!("WiFi already connected");
+        return Ok(());
+    }
 
     log::info!("Connecting to WiFi...");
     wifi.connect()?;

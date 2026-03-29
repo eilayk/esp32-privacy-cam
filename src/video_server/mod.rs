@@ -22,6 +22,7 @@ pub struct VideoHttpServer<'a> {
 
 const PAGE_HTML_BYTES: &[u8] = include_bytes!("page.html");
 const MAX_WS_SESSIONS: usize = 4;
+const WS_BROADCAST_THREAD_STACK_SIZE: usize = 24 * 1024;
 
 /// Encode a frame with its trace data into a binary format:
 /// [4 bytes: trace_json_length (u32 little-endian)]
@@ -67,6 +68,7 @@ impl<'a> VideoHttpServer<'a> {
         let send_sessions = Arc::clone(&ws_sessions);
         thread::Builder::new()
             .name("ws-frame-broadcaster".into())
+            .stack_size(WS_BROADCAST_THREAD_STACK_SIZE)
             .spawn(move || {
                 // Reusable buffers to avoid allocations per frame
                 let mut encode_buffer = Vec::with_capacity(64 * 1024); // 64KB for encoded frame

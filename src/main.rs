@@ -58,7 +58,9 @@ fn run_app() -> anyhow::Result<()> {
     let camera = Camera::init(camera_pins)?;
     log::info!("Camera initialized successfully!");
 
-    let (tx, rx) = bounded(1);
+    // Increased queue capacity from 1 to 16 to buffer transmission jitter
+    // and reduce frame drops when WebSocket clients are temporarily slow
+    let (tx, rx) = bounded(16);
 
     // Start HTTP server
     log::info!("Starting HTTP server...");
@@ -67,6 +69,7 @@ fn run_app() -> anyhow::Result<()> {
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
     let mut dropped_frames: u32 = 0;
+    let mut adaptive_delay_ms: u64 = 5; // Start at 5ms (max ~200fps)
 
     loop {
         // Capture a frame from the camera
@@ -86,6 +89,10 @@ fn run_app() -> anyhow::Result<()> {
                         );
                         dropped_frames = 0;
                     }
+                    // Queue is healthy, can reduce delay slightly for higher fps
+                    if adaptive_delay_ms > 5 {
+                        adaptive_delay_ms = adaptive_delay_ms.saturating_sub(1);
+                    }
                 }
                 Err(TrySendError::Full(_)) => {
                     dropped_frames = dropped_frames.saturating_add(1);
@@ -95,6 +102,10 @@ fn run_app() -> anyhow::Result<()> {
                             dropped_frames
                         );
                     }
+                    // Queue is full, increase delay to reduce pressure
+                    if adaptive_delay_ms < 20 {
+                        adaptive_delay_ms = adaptive_delay_ms.saturating_add(2);
+                    }
                 }
                 Err(TrySendError::Disconnected(_)) => {
                     log::error!("Frame queue disconnected; stopping capture loop");
@@ -102,7 +113,8 @@ fn run_app() -> anyhow::Result<()> {
                 }
             }
         }
-        thread::sleep(Duration::from_millis(10));
+        // Adaptive throttling: adjusts between 5-20ms based on queue pressure
+        thread::sleep(Duration::from_millis(adaptive_delay_ms));
     }
 
     Ok(())

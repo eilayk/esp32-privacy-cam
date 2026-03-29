@@ -136,19 +136,48 @@ fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()>
     log::info!("Starting WiFi...");
     wifi.start()?;
 
-    // flush any existing WiFi state
-    if wifi.is_connected()? {
-        log::info!("WiFi already connected");
-        return Ok(());
+    let mut retry_count = 0;
+    const MAX_RETRIES: u32 = 10;
+
+    loop {
+        log::info!(
+            "Connecting to WiFi '{}' (attempt {}/{})...",
+            SSID,
+            retry_count + 1,
+            MAX_RETRIES
+        );
+
+        match wifi.connect() {
+            Ok(_) => {
+                log::info!("Waiting for IP address (DHCP)...");
+                match wifi.wait_netif_up() {
+                    Ok(_) => {
+                        log::info!("WiFi connected and IP obtained!");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to obtain IP address: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to connect to WiFi: {:?}", e);
+            }
+        }
+
+        retry_count += 1;
+        if retry_count >= MAX_RETRIES {
+            anyhow::bail!("Failed to connect to WiFi after {} attempts", MAX_RETRIES);
+        }
+
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s... up to ~30s max
+        let delay_secs = (2u64.pow(retry_count)).min(30);
+        let delay = Duration::from_secs(delay_secs);
+        
+        log::info!("Retrying in {:?}...", delay);
+        let _ = wifi.disconnect();
+        thread::sleep(delay);
     }
-
-    log::info!("Connecting to WiFi...");
-    wifi.connect()?;
-
-    log::info!("Waiting for IP address (DHCP)...");
-    wifi.wait_netif_up()?;
-
-    Ok(())
 }
 
 fn main() {

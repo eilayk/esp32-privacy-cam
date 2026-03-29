@@ -1,11 +1,15 @@
-use std::thread;
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+};
 
-use crossbeam::channel::Receiver;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pubsub::PubSubChannel};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, pubsub::PubSubChannel,
+};
 use esp_idf_svc::{
     http::{
         self,
-        server::EspHttpServer,
+        server::{ws::EspHttpWsDetachedSender, EspHttpServer},
         Method,
     },
     io::Write,
@@ -16,6 +20,7 @@ use crate::types::JpegImage;
 
 pub struct VideoHttpServer<'a> {
     _server: EspHttpServer<'a>,
+    pub ws_sessions: Arc<Mutex<Vec<EspHttpWsDetachedSender>>>,
 }
 
 const PAGE_HTML_BYTES: &[u8] = include_bytes!("page.html");
@@ -24,6 +29,31 @@ const FRAME_QUEUE_SIZE: usize = 2;
 const MAX_PUBLISHERS: usize = 1;
 
 type FrameData = heapless::Vec<u8, 65536>;
+
+/// static channel for receiving frames from the camera task. The worker thread in VideoHttpServer
+/// will read from this channel and publish to the PubSubChannel for WebSocket subscribers.
+pub static FRAME_CHAN: Channel<CriticalSectionRawMutex, Vec<u8>, 1> = Channel::new();
+
+#[embassy_executor::task]
+pub async fn broadcaster_task(sessions: Arc<Mutex<Vec<EspHttpWsDetachedSender>>>) {
+    loop {
+        // Wait for the next frame from the channel
+        let frame = FRAME_CHAN.receive().await;
+
+        // Send the frame to all connected WebSocket sessions
+        let mut guard = match sessions.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                log::error!("Failed to lock WebSocket sessions: {:?}", e);
+                continue;
+            }
+        };
+
+        // Broadcast to active sessions
+        // Remove any sessions that fail to send (disconnected)
+        guard.retain_mut(|sender| sender.send(FrameType::Binary(false), &frame).is_ok());
+    }
+}
 
 impl<'a> VideoHttpServer<'a> {
     pub fn new<T>(
@@ -50,7 +80,7 @@ impl<'a> VideoHttpServer<'a> {
             .spawn(move || {
                 while let Ok(frame) = rx.recv() {
                     let data = frame.data();
-                    
+
                     // Copy frame data into heapless Vec
                     if let Ok(frame_vec) = heapless::Vec::from_slice(data) {
                         publisher.publish_immediate(frame_vec);

@@ -1,16 +1,21 @@
 use std::{thread, time::Duration};
 
-use crate::libs::camera::{Camera, CameraPins};
-use crossbeam::channel::bounded;
+use crate::{
+    libs::camera::{Camera, CameraPins},
+    types::JpegImage,
+};
+use embassy_executor::Executor;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pubsub::PubSubChannel};
+use embassy_time::Timer;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
-    hal::prelude::Peripherals,
+    hal::{peripherals::Peripherals, task::block_on},
     log::EspLogger,
     nvs::EspDefaultNvsPartition,
     sys::link_patches,
     wifi::{self, BlockingWifi, EspWifi},
 };
+use static_cell::StaticCell;
 mod libs;
 mod types;
 mod video_server;
@@ -70,22 +75,35 @@ fn run_app() -> anyhow::Result<()> {
     let camera = Camera::init(camera_pins)?;
     log::info!("Camera initialized successfully!");
 
-    let (tx, rx) = bounded(1);
+    // create static executor for async tasks
+    static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+    let executor = EXECUTOR.init(Executor::new());
 
     // Start HTTP server
     log::info!("Starting HTTP server...");
-    let _video_server = video_server::VideoHttpServer::new(rx, &FRAME_CHANNEL)?;
+    let video_server = video_server::VideoHttpServer::new(rx, &FRAME_CHANNEL)?;
+    let ws_sessions = video_server.ws_sessions.clone();
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
-    loop {
-        // Capture a frame from the camera
-        if let Ok(frame) = camera.capture() {
-            // Send the frame to the HTTP server thread
-            let _ = tx.try_send(frame);
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    executor.run(|spawner| {
+        // Spawn the broadcaster task that will read frames from the channel and broadcast to
+        // WebSocket clients
+        spawner
+            .spawn(video_server::broadcaster_task(ws_sessions))
+            .unwrap();
+
+        let mut main_loop = async move {
+            loop {
+                if let Ok(frame) = camera.capture() {
+                    let _ = video_server::FRAME_CHAN.try_send(frame.data().to_vec());
+                }
+                Timer::after_millis(10).await;
+            }
+        };
+
+        block_on(main_loop);
+    });
 }
 
 fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()> {
@@ -116,4 +134,3 @@ fn main() {
         log::error!("Application error: {:?}", err);
     }
 }
-

@@ -74,31 +74,71 @@
             background: #111;
             border: 1px solid #333;
             border-radius: 8px;
-            padding: 12px;
+            padding: 16px;
             box-sizing: border-box;
+            margin-top: 10px;
         }
 
-        .trace-summary {
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-            margin-bottom: 10px;
-            color: #ddd;
-            font-size: 13px;
+        .trace-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
         }
 
-        .metric {
-            background: #191919;
-            border: 1px solid #2f2f2f;
+        .metric-card {
+            background: #1a1a1a;
+            border: 1px solid #333;
             border-radius: 6px;
-            padding: 6px 10px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .metric-label {
+            color: #888;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .metric-value {
+            color: #fff;
+            font-size: 18px;
+            font-weight: 600;
+            font-family: ui-monospace, SFMono-Regular, monospace;
+        }
+
+        .metric-sub {
+            color: #666;
+            font-size: 11px;
+            margin-top: 2px;
         }
 
         .trace-title {
-            margin: 0 0 8px;
+            margin: 0 0 16px;
             color: #ccc;
-            font-size: 14px;
-            letter-spacing: 0.02em;
+            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .reset-btn {
+            background: #333;
+            border: none;
+            color: #aaa;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .reset-btn:hover {
+            background: #444;
+            color: #fff;
         }
 
         table {
@@ -111,22 +151,34 @@
         th,
         td {
             text-align: left;
-            padding: 8px;
+            padding: 10px 8px;
             border-bottom: 1px solid #2a2a2a;
         }
 
         th {
-            color: #bbb;
-            font-weight: 600;
+            color: #777;
+            font-weight: 500;
+            font-size: 11px;
+            text-transform: uppercase;
         }
 
         td {
             color: #8be9fd;
         }
 
+        .col-step { width: 30%; color: #ddd; }
+        .col-cur { width: 20%; }
+        .col-avg { width: 25%; color: #50fa7b; }
+        .col-max { width: 25%; color: #ff5555; }
+
         .empty-row td {
             color: #777;
+            text-align: center;
+            padding: 30px;
         }
+
+        .highlight-warn { color: #ffb86c; }
+        .highlight-err { color: #ff5555; }
     </style>
 </head>
 
@@ -138,21 +190,46 @@
         <div class="info">Live WebSocket feed</div>
 
         <section class="trace-panel" aria-live="polite">
-            <h2 class="trace-title">Performance Trace</h2>
-            <div class="trace-summary">
-                <div class="metric">FPS: <span id="fps">0.00</span></div>
-                <div class="metric">Frame Time: <span id="total-ms">0.000</span> ms</div>
+            <div class="trace-title">
+                <span>Performance Metrics</span>
+                <button class="reset-btn" onclick="stats.reset()">Reset Stats</button>
             </div>
+            
+            <div class="trace-grid">
+                <div class="metric-card">
+                    <span class="metric-label">Frame Rate</span>
+                    <span class="metric-value"><span id="fps">0.0</span> <small style="font-size: 12px; color: #666;">FPS</small></span>
+                    <span class="metric-sub">Avg: <span id="fps-avg">0.0</span> | Max: <span id="fps-max">0.0</span></span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Latency (Total)</span>
+                    <span class="metric-value"><span id="total-ms">0.0</span> <small style="font-size: 12px; color: #666;">ms</small></span>
+                    <span class="metric-sub">Avg: <span id="total-avg">0.0</span> | Max: <span id="total-max">0.0</span></span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Throughput</span>
+                    <span class="metric-value"><span id="bps">0.0</span> <small style="font-size: 12px; color: #666;">KB/s</small></span>
+                    <span class="metric-sub">Size: <span id="frame-kb">0.0</span> KB (Avg: <span id="frame-avg-kb">0.0</span>)</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">System State</span>
+                    <span class="metric-value" id="system-state">Normal</span>
+                    <span class="metric-sub">Drops: <span id="drops">0</span> | Delay: <span id="delay">0</span>ms</span>
+                </div>
+            </div>
+
             <table>
                 <thead>
                     <tr>
-                        <th>Step</th>
-                        <th>Duration (ms)</th>
+                        <th class="col-step">Step</th>
+                        <th class="col-cur">Current</th>
+                        <th class="col-avg">Average</th>
+                        <th class="col-max">Max</th>
                     </tr>
                 </thead>
                 <tbody id="trace-rows">
                     <tr class="empty-row">
-                        <td colspan="2">Waiting for trace data...</td>
+                        <td colspan="4">Waiting for trace data...</td>
                     </tr>
                 </tbody>
             </table>
@@ -163,146 +240,201 @@
         const canvas = document.getElementById('stream');
         const ctx = canvas.getContext('2d');
         const statusEl = document.getElementById('status');
-        const fpsEl = document.getElementById('fps');
-        const totalMsEl = document.getElementById('total-ms');
-        const traceRowsEl = document.getElementById('trace-rows');
         
+        class PerformanceStats {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.frameCount = 0;
+                this.startTime = null;
+                this.lastFrameTime = null;
+                this.totalBytes = 0;
+                this.droppedFrames = 0;
+                
+                this.metrics = {
+                    fps: { cur: 0, avg: 0, max: 0, history: [] },
+                    latency: { cur: 0, avg: 0, max: 0 },
+                    frameSize: { cur: 0, avg: 0, max: 0 },
+                    throughput: { cur: 0 },
+                    steps: {} // label -> { cur, avg, max, sum, count }
+                };
+                
+                this.fpsWindow = 60;
+                this.frameTimestamps = [];
+                
+                // UI Elements
+                this.els = {
+                    fps: document.getElementById('fps'),
+                    fpsAvg: document.getElementById('fps-avg'),
+                    fpsMax: document.getElementById('fps-max'),
+                    total: document.getElementById('total-ms'),
+                    totalAvg: document.getElementById('total-avg'),
+                    totalMax: document.getElementById('total-max'),
+                    bps: document.getElementById('bps'),
+                    frameKb: document.getElementById('frame-kb'),
+                    frameAvgKb: document.getElementById('frame-avg-kb'),
+                    drops: document.getElementById('drops'),
+                    delay: document.getElementById('delay'),
+                    state: document.getElementById('system-state'),
+                    rows: document.getElementById('trace-rows')
+                };
+                
+                if (this.els.rows) this.els.rows.innerHTML = '<tr class="empty-row"><td colspan="4">Waiting for trace data...</td></tr>';
+            }
+
+            recordFrame(traceData, jpegSize) {
+                const now = performance.now();
+                if (!this.startTime) this.startTime = now;
+                
+                this.frameCount++;
+                this.totalBytes += (jpegSize + JSON.stringify(traceData).length + 4);
+                
+                // FPS Tracking
+                this.frameTimestamps.push(now);
+                if (this.frameTimestamps.length > this.fpsWindow) {
+                    this.frameTimestamps.shift();
+                }
+                
+                if (this.frameTimestamps.length >= 2) {
+                    const duration = (now - this.frameTimestamps[0]) / 1000;
+                    this.metrics.fps.cur = (this.frameTimestamps.length - 1) / duration;
+                    this.metrics.fps.max = Math.max(this.metrics.fps.max, this.metrics.fps.cur);
+                    
+                    const totalDuration = (now - this.startTime) / 1000;
+                    this.metrics.fps.avg = (this.frameCount - 1) / totalDuration;
+                    
+                    this.metrics.throughput.cur = (this.totalBytes / 1024) / totalDuration;
+                }
+
+                // Latency Tracking
+                this.metrics.latency.cur = traceData.total_ms;
+                this.metrics.latency.max = Math.max(this.metrics.latency.max, traceData.total_ms);
+                this.metrics.latency.avg = (this.metrics.latency.avg * (this.frameCount - 1) + traceData.total_ms) / this.frameCount;
+
+                // Frame Size Tracking
+                const kb = jpegSize / 1024;
+                this.metrics.frameSize.cur = kb;
+                this.metrics.frameSize.max = Math.max(this.metrics.frameSize.max, kb);
+                this.metrics.frameSize.avg = (this.metrics.frameSize.avg * (this.frameCount - 1) + kb) / this.frameCount;
+
+                // Steps Tracking
+                traceData.steps.forEach(step => {
+                    if (!this.metrics.steps[step.label]) {
+                        this.metrics.steps[step.label] = { cur: 0, avg: 0, max: 0, sum: 0, count: 0 };
+                    }
+                    const s = this.metrics.steps[step.label];
+                    s.cur = step.duration_ms;
+                    s.max = Math.max(s.max, step.duration_ms);
+                    s.sum += step.duration_ms;
+                    s.count++;
+                    s.avg = s.sum / s.count;
+                });
+
+                this.updateUI(traceData);
+            }
+
+            updateUI(traceData) {
+                this.els.fps.textContent = this.metrics.fps.cur.toFixed(1);
+                this.els.fpsAvg.textContent = this.metrics.fps.avg.toFixed(1);
+                this.els.fpsMax.textContent = this.metrics.fps.max.toFixed(1);
+
+                this.els.total.textContent = this.metrics.latency.cur.toFixed(2);
+                this.els.totalAvg.textContent = this.metrics.latency.avg.toFixed(2);
+                this.els.totalMax.textContent = this.metrics.latency.max.toFixed(2);
+
+                this.els.bps.textContent = this.metrics.throughput.cur.toFixed(1);
+                this.els.frameKb.textContent = this.metrics.frameSize.cur.toFixed(1);
+                this.els.frameAvgKb.textContent = this.metrics.frameSize.avg.toFixed(1);
+
+                this.els.drops.textContent = traceData.dropped || 0;
+                this.els.delay.textContent = traceData.delay_ms || 0;
+
+                // System state logic
+                if (traceData.dropped > this.droppedFrames) {
+                    this.els.state.textContent = 'Congested';
+                    this.els.state.className = 'metric-value highlight-err';
+                } else if (traceData.delay_ms > 10) {
+                    this.els.state.textContent = 'Throttled';
+                    this.els.state.className = 'metric-value highlight-warn';
+                } else {
+                    this.els.state.textContent = 'Healthy';
+                    this.els.state.className = 'metric-value';
+                }
+                this.droppedFrames = traceData.dropped;
+
+                // Update steps table
+                let rowsHtml = '';
+                Object.keys(this.metrics.steps).sort().forEach(label => {
+                    const s = this.metrics.steps[label];
+                    rowsHtml += `
+                        <tr>
+                            <td class="col-step">${label}</td>
+                            <td class="col-cur">${s.cur.toFixed(2)}</td>
+                            <td class="col-avg">${s.avg.toFixed(2)}</td>
+                            <td class="col-max">${s.max.toFixed(2)}</td>
+                        </tr>
+                    `;
+                });
+                this.els.rows.innerHTML = rowsHtml;
+            }
+        }
+
+        const stats = new PerformanceStats();
         let ws = null;
         let isInit = false;
         
-        // FPS calculation
-        let frameTimestamps = [];
-        const FPS_WINDOW_SIZE = 30;
-
         function updateStatus(text, state) {
             statusEl.textContent = text;
             statusEl.className = 'status ' + state;
         }
         
-        function calculateFPS() {
-            if (frameTimestamps.length < 2) return 0;
-            
-            const timeSpan = frameTimestamps[frameTimestamps.length - 1] - frameTimestamps[0];
-            const fps = (frameTimestamps.length - 1) / (timeSpan / 1000);
-            return fps;
-        }
-        
-        function updateTraceMetrics(traceData) {
-            // Update FPS
-            const fps = calculateFPS();
-            fpsEl.textContent = fps.toFixed(2);
-            
-            // Update total time
-            totalMsEl.textContent = traceData.total_ms.toFixed(3);
-            
-            // Update trace steps table
-            traceRowsEl.innerHTML = '';
-            
-            if (traceData.steps && traceData.steps.length > 0) {
-                traceData.steps.forEach(step => {
-                    const row = document.createElement('tr');
-                    
-                    const labelCell = document.createElement('td');
-                    labelCell.textContent = step.label;
-                    row.appendChild(labelCell);
-                    
-                    const durationCell = document.createElement('td');
-                    durationCell.textContent = step.duration_ms.toFixed(3);
-                    row.appendChild(durationCell);
-                    
-                    traceRowsEl.appendChild(row);
-                });
-            } else {
-                const row = document.createElement('tr');
-                row.className = 'empty-row';
-                const cell = document.createElement('td');
-                cell.colSpan = 2;
-                cell.textContent = 'No trace steps recorded';
-                row.appendChild(cell);
-                traceRowsEl.appendChild(row);
-            }
-        }
-        
         function decodeFrameMessage(arrayBuffer) {
-            // Read trace JSON length (first 4 bytes, u32 little-endian)
             const view = new DataView(arrayBuffer);
-            const traceLength = view.getUint32(0, true); // true = little-endian
-            
-            // Extract trace JSON
+            const traceLength = view.getUint32(0, true);
             const traceBytes = new Uint8Array(arrayBuffer, 4, traceLength);
             const traceJson = new TextDecoder().decode(traceBytes);
             const traceData = JSON.parse(traceJson);
-            
-            // Extract JPEG data
             const jpegOffset = 4 + traceLength;
             const jpegData = arrayBuffer.slice(jpegOffset);
-            
             return { traceData, jpegData };
         }
 
         function connect() {
             updateStatus('Connecting...', 'connecting');
-            
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws`;
-            
             ws = new WebSocket(wsUrl);
             ws.binaryType = 'arraybuffer';
 
-            ws.onopen = () => {
-                console.log('WebSocket connected');
-                updateStatus('Connected', 'connected');
-            };
-
+            ws.onopen = () => updateStatus('Connected', 'connected');
             ws.onmessage = (event) => {
-                // Track frame arrival time for FPS calculation
-                const now = performance.now();
-                frameTimestamps.push(now);
-                if (frameTimestamps.length > FPS_WINDOW_SIZE) {
-                    frameTimestamps.shift();
-                }
-                
-                // Decode the binary message
                 const { traceData, jpegData } = decodeFrameMessage(event.data);
+                stats.recordFrame(traceData, jpegData.byteLength);
                 
-                // Update trace metrics
-                updateTraceMetrics(traceData);
-                
-                // Render JPEG frame
                 const blob = new Blob([jpegData], { type: 'image/jpeg' });
                 const url = URL.createObjectURL(blob);
-                
                 const img = new Image();
                 img.onload = () => {
-                    // Resize canvas to match image dimensions (first frame only)
                     if (!isInit) {
                         canvas.width = img.width;
                         canvas.height = img.height;
                         isInit = true;
                     }
-                    
-                    // Draw the image on canvas
                     ctx.drawImage(img, 0, 0);
                     URL.revokeObjectURL(url);
                 };
                 img.src = url;
             };
 
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                updateStatus('Error', 'disconnected');
-            };
-
+            ws.onerror = () => updateStatus('Error', 'disconnected');
             ws.onclose = () => {
-                console.log('WebSocket closed');
                 updateStatus('Disconnected', 'disconnected');
-                
-                // Attempt to reconnect after 2 seconds
                 setTimeout(connect, 2000);
             };
         }
 
-        // Start connection
         connect();
     </script>
 </body>

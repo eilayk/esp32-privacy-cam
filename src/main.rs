@@ -74,6 +74,8 @@ fn run_app() -> anyhow::Result<()> {
     loop {
         // Capture a frame from the camera
         let mut trace = Trace::start();
+        trace.dropped_frames = dropped_frames;
+        trace.adaptive_delay_ms = adaptive_delay_ms;
         trace.checkpoint("request_frame");
         if let Ok(frame) = camera.capture() {
             trace.checkpoint("captured_frame");

@@ -15,10 +15,12 @@ pub struct Trace {
     start: Instant,
     // Time elapsed since start to the last checkpoint
     // Used to calculate the duration of each step without needing to store all timestamps
-    // Can also be used to get total elapsed time at the end of the trace
     last_elapsed: Duration,
     // Each step is a tuple of (label, duration since last checkpoint)
     steps: Vec<(&'static str, Duration)>,
+    // Optional metadata
+    pub dropped_frames: u32,
+    pub adaptive_delay_ms: u64,
 }
 
 impl Trace {
@@ -28,6 +30,8 @@ impl Trace {
             start: Instant::now(),
             last_elapsed: Duration::ZERO,
             steps: Vec::with_capacity(8),
+            dropped_frames: 0,
+            adaptive_delay_ms: 0,
         }
     }
 
@@ -79,7 +83,11 @@ impl Trace {
 
         json.push_str("],\"total_ms\":");
         let total_ms = self.total_elapsed().as_secs_f64() * 1000.0;
-        let _ = write!(json, "{:.3}}}", total_ms);
+        let _ = write!(
+            json,
+            "{:.3},\"dropped\":{},\"delay_ms\":{}}}",
+            total_ms, self.dropped_frames, self.adaptive_delay_ms
+        );
     }
 }
 

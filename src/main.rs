@@ -70,11 +70,11 @@ fn run_app() -> anyhow::Result<()> {
 
     loop {
         // Capture a frame from the camera
-        let trace = Trace::start();
+        let mut trace = Trace::start();
         trace.checkpoint("request_frame");
         if let Ok(frame) = camera.capture() {
             trace.checkpoint("captured_frame");
-            let mut traced_frame = frame.attach_trace(trace);
+            let traced_frame = frame.attach_trace(trace);
 
             // Send the frame to the HTTP server thread
             match tx.try_send(traced_frame) {

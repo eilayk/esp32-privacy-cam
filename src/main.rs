@@ -2,6 +2,7 @@ use std::{thread, time::Duration};
 
 use crate::libs::camera::{Camera, CameraPins};
 use crossbeam::channel::bounded;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pubsub::PubSubChannel};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::prelude::Peripherals,
@@ -16,6 +17,20 @@ mod video_server;
 
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
+
+const FRAME_QUEUE_SIZE: usize = 2;
+const MAX_WS_SESSIONS: usize = 4;
+const MAX_PUBLISHERS: usize = 1;
+
+type FrameData = heapless::Vec<u8, 65536>;
+
+static FRAME_CHANNEL: PubSubChannel<
+    CriticalSectionRawMutex,
+    FrameData,
+    FRAME_QUEUE_SIZE,
+    MAX_WS_SESSIONS,
+    MAX_PUBLISHERS,
+> = PubSubChannel::new();
 
 fn run_app() -> anyhow::Result<()> {
     link_patches();
@@ -59,7 +74,7 @@ fn run_app() -> anyhow::Result<()> {
 
     // Start HTTP server
     log::info!("Starting HTTP server...");
-    let _video_server = video_server::VideoHttpServer::new(rx)?;
+    let _video_server = video_server::VideoHttpServer::new(rx, &FRAME_CHANNEL)?;
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 

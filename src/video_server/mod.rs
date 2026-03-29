@@ -1,13 +1,11 @@
-use std::{
-    sync::{Arc, Mutex},
-    thread,
-};
+use std::thread;
 
 use crossbeam::channel::Receiver;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pubsub::PubSubChannel};
 use esp_idf_svc::{
     http::{
         self,
-        server::{ws::EspHttpWsDetachedSender, EspHttpServer},
+        server::EspHttpServer,
         Method,
     },
     io::Write,
@@ -22,9 +20,22 @@ pub struct VideoHttpServer<'a> {
 
 const PAGE_HTML_BYTES: &[u8] = include_bytes!("page.html");
 const MAX_WS_SESSIONS: usize = 4;
+const FRAME_QUEUE_SIZE: usize = 2;
+const MAX_PUBLISHERS: usize = 1;
+
+type FrameData = heapless::Vec<u8, 65536>;
 
 impl<'a> VideoHttpServer<'a> {
-    pub fn new<T>(rx: Receiver<T>) -> anyhow::Result<Self>
+    pub fn new<T>(
+        rx: Receiver<T>,
+        frame_channel: &'static PubSubChannel<
+            CriticalSectionRawMutex,
+            FrameData,
+            FRAME_QUEUE_SIZE,
+            MAX_WS_SESSIONS,
+            MAX_PUBLISHERS,
+        >,
+    ) -> anyhow::Result<Self>
     where
         T: JpegImage + Send + 'static,
     {
@@ -32,42 +43,23 @@ impl<'a> VideoHttpServer<'a> {
 
         let mut http_server = EspHttpServer::new(&server_config)?;
 
-        // Store websocket sesssions. To be published to whenever a new frame is received.
-        let ws_sessions: Arc<Mutex<Vec<EspHttpWsDetachedSender>>> =
-            Arc::new(Mutex::new(Vec::with_capacity(MAX_WS_SESSIONS)));
-
-        // Worker thread to broadcast frames to all connected websocket clients.
-        let send_sessions = Arc::clone(&ws_sessions);
+        // Worker thread to receive frames and publish to PubSubChannel
+        let publisher = frame_channel.publisher().unwrap();
         thread::Builder::new()
-            .name("ws-frame-broadcaster".into())
+            .name("ws-frame-publisher".into())
             .spawn(move || {
                 while let Ok(frame) = rx.recv() {
                     let data = frame.data();
-
-                    let mut sessions = match send_sessions.lock() {
-                        Ok(guard) => guard,
-                        Err(err) => {
-                            log::error!("WebSocket session lock poisoned: {:?}", err);
-                            return;
-                        }
-                    };
-
-                    sessions.retain_mut(|sender| {
-                        match sender.send(FrameType::Binary(false), data) {
-                            Ok(_) => true,
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to send WebSocket frame, removing session {}: {:?}",
-                                    sender.session(),
-                                    err
-                                );
-                                false
-                            }
-                        }
-                    });
+                    
+                    // Copy frame data into heapless Vec
+                    if let Ok(frame_vec) = heapless::Vec::from_slice(data) {
+                        publisher.publish_immediate(frame_vec);
+                    } else {
+                        log::warn!("Frame too large for buffer, skipping");
+                    }
                 }
 
-                log::warn!("Frame channel closed; websocket broadcaster exiting");
+                log::warn!("Frame channel closed; websocket publisher exiting");
             })?;
 
         // Serve the HTML page
@@ -77,32 +69,63 @@ impl<'a> VideoHttpServer<'a> {
                 .map(|_| ())
         })?;
 
-        // WebSocket handler. Tracks new sessions.
-        let ws_handler_sessions = Arc::clone(&ws_sessions);
+        // WebSocket handler. Spawns a subscriber thread for each new connection.
         http_server.ws_handler("/ws", move |ws| -> anyhow::Result<()> {
             let session = ws.session();
 
             if ws.is_new() {
-                let sender = ws.create_detached_sender()?;
-
-                let mut sessions = ws_handler_sessions.lock().map_err(|err| {
-                    anyhow::anyhow!("WebSocket session lock poisoned on connect: {:?}", err)
+                let mut sender = ws.create_detached_sender()?;
+                let mut subscriber = frame_channel.subscriber().map_err(|_| {
+                    anyhow::anyhow!("Too many WebSocket subscribers")
                 })?;
 
-                sessions.push(sender);
+                // Spawn a thread to listen for frames and send to this WebSocket
+                thread::Builder::new()
+                    .name(format!("ws-subscriber-{}", session))
+                    .spawn(move || {
+                        loop {
+                            // Poll for the next message with a small sleep
+                            loop {
+                                match subscriber.try_next_message() {
+                                    Some(embassy_sync::pubsub::WaitResult::Message(
+                                        frame_data,
+                                    )) => {
+                                        if let Err(err) =
+                                            sender.send(FrameType::Binary(false), &frame_data)
+                                        {
+                                            log::warn!(
+                                                "Failed to send WebSocket frame, session {} disconnected: {:?}",
+                                                session,
+                                                err
+                                            );
+                                            return;
+                                        }
+                                        break;
+                                    }
+                                    Some(embassy_sync::pubsub::WaitResult::Lagged(count)) => {
+                                        log::warn!(
+                                            "WebSocket session {} lagged behind by {} frames",
+                                            session,
+                                            count
+                                        );
+                                        // Continue to get the next message
+                                    }
+                                    None => {
+                                        // No message available, sleep briefly and retry
+                                        std::thread::sleep(std::time::Duration::from_micros(100));
+                                    }
+                                }
+                            }
+                        }
+                    })?;
 
                 log::info!("New WebSocket connection, session: {}", session);
                 return Ok(());
             }
 
             if ws.is_closed() {
-                let mut sessions = ws_handler_sessions.lock().map_err(|err| {
-                    anyhow::anyhow!("WebSocket session lock poisoned on close: {:?}", err)
-                })?;
-
-                sessions.retain(|existing| existing.session() != session);
-
                 log::info!("WebSocket connection closed, session: {}", session);
+                // Subscriber thread will detect send failure and exit automatically
                 return Ok(());
             }
 

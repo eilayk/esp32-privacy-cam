@@ -58,7 +58,8 @@ fn run_app() -> anyhow::Result<()> {
     let camera = Camera::init(camera_pins)?;
     log::info!("Camera initialized successfully!");
 
-    let (tx, rx) = bounded(2);
+    // Use a bounded channel to prevent unbounded memory growth if the HTTP server can't keep up.
+    let (tx, rx) = bounded(3);
 
     // Start HTTP server
     log::info!("Starting HTTP server...");
@@ -67,7 +68,7 @@ fn run_app() -> anyhow::Result<()> {
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
     let mut dropped_frames: u32 = 0;
-    let mut adaptive_delay_ms: u64 = 5; // Start at 5ms (max ~200fps)
+    let mut adaptive_delay_ms: u64 = 10;
 
     loop {
         // Capture a frame from the camera
@@ -89,22 +90,24 @@ fn run_app() -> anyhow::Result<()> {
                         );
                         dropped_frames = 0;
                     }
-                    // Queue is healthy, can reduce delay slightly for higher fps
-                    if adaptive_delay_ms > 5 {
-                        adaptive_delay_ms = adaptive_delay_ms.saturating_sub(1);
+                    // Queue is healthy, slowly reduce delay to find the sweet spot
+                    if adaptive_delay_ms > 10 {
+                        adaptive_delay_ms = adaptive_delay_ms.saturating_sub(2);
                     }
                 }
                 Err(TrySendError::Full(_)) => {
                     dropped_frames = dropped_frames.saturating_add(1);
-                    if dropped_frames == 1 || dropped_frames % 100 == 0 {
+                    if dropped_frames == 1 || dropped_frames % 50 == 0 {
                         log::warn!(
-                            "Frame queue is full; dropping frame(s), dropped_count={}",
-                            dropped_frames
+                            "Frame queue is full; dropping frame(s), dropped_count={}, current_delay={}ms",
+                            dropped_frames,
+                            adaptive_delay_ms
                         );
                     }
-                    // Queue is full, increase delay to reduce pressure
-                    if adaptive_delay_ms < 20 {
-                        adaptive_delay_ms = adaptive_delay_ms.saturating_add(2);
+                    // Queue is full, increase delay aggressively to match network throughput.
+                    // Max delay of 250ms allows for ~4fps floor during extreme congestion.
+                    if adaptive_delay_ms < 250 {
+                        adaptive_delay_ms = adaptive_delay_ms.saturating_add(25);
                     }
                 }
                 Err(TrySendError::Disconnected(_)) => {
@@ -113,7 +116,7 @@ fn run_app() -> anyhow::Result<()> {
                 }
             }
         }
-        // Adaptive throttling: adjusts between 5-20ms based on queue pressure
+        // Adaptive throttling: adjusts based on queue pressure to prevent constant frame drops
         thread::sleep(Duration::from_millis(adaptive_delay_ms));
     }
 

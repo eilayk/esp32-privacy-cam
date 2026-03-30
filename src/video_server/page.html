@@ -337,6 +337,16 @@
                 .catch(err => console.error('Failed to update setting:', err));
         }
 
+        function updateInference(enabled) {
+            fetch(`/inference/set?enabled=${enabled}`)
+                .then(response => {
+                    if (!response.ok) {
+                        console.error('Failed to update inference setting');
+                    }
+                })
+                .catch(err => console.error('Failed to update inference setting:', err));
+        }
+
         class PerformanceStats {
             constructor() {
                 this.reset();

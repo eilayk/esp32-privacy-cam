@@ -10,18 +10,11 @@ use esp_idf_svc::{
             camera_config_t, camera_config_t__bindgen_ty_1, camera_config_t__bindgen_ty_2,
             camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_fb_t,
             camera_grab_mode_t_CAMERA_GRAB_LATEST, esp_camera_deinit, esp_camera_fb_get,
-            esp_camera_fb_return, esp_camera_init, esp_camera_sensor_get,
-            framesize_t,
-            framesize_t_FRAMESIZE_QQVGA,
-            framesize_t_FRAMESIZE_QVGA,
-            framesize_t_FRAMESIZE_VGA,
-            framesize_t_FRAMESIZE_SVGA,
-            framesize_t_FRAMESIZE_XGA,
-            framesize_t_FRAMESIZE_HD,
-            framesize_t_FRAMESIZE_SXGA,
-            framesize_t_FRAMESIZE_UXGA,
-            ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
-            pixformat_t_PIXFORMAT_JPEG,
+            esp_camera_fb_return, esp_camera_init, esp_camera_sensor_get, framesize_t,
+            framesize_t_FRAMESIZE_HD, framesize_t_FRAMESIZE_QQVGA, framesize_t_FRAMESIZE_QVGA,
+            framesize_t_FRAMESIZE_SVGA, framesize_t_FRAMESIZE_SXGA, framesize_t_FRAMESIZE_UXGA,
+            framesize_t_FRAMESIZE_VGA, framesize_t_FRAMESIZE_XGA, ledc_channel_t_LEDC_CHANNEL_0,
+            ledc_timer_t_LEDC_TIMER_0, pixformat_t_PIXFORMAT_JPEG,
         },
         ESP_OK,
     },
@@ -90,7 +83,7 @@ pub struct CameraPins {
 
 pub struct Camera;
 
-struct Frame {
+pub struct Frame {
     fb: *mut camera_fb_t,
 
     // Avoid deallocating the camera while frames are still in use.
@@ -186,7 +179,7 @@ impl Camera {
         Ok(Arc::new(Self))
     }
 
-    pub fn capture(self: &Arc<Self>) -> anyhow::Result<impl JpegImage + Send + 'static> {
+    pub fn capture(self: &Arc<Self>) -> anyhow::Result<Frame> {
         let fb = unsafe { esp_camera_fb_get() };
         if fb.is_null() {
             Err(anyhow::anyhow!("Failed to capture frame"))
@@ -213,7 +206,10 @@ impl Camera {
         };
 
         if ret != 0 {
-            Err(anyhow::anyhow!("Failed to set resolution: error code {}", ret))
+            Err(anyhow::anyhow!(
+                "Failed to set resolution: error code {}",
+                ret
+            ))
         } else {
             Ok(())
         }
@@ -255,7 +251,10 @@ impl Camera {
         };
 
         if ret != 0 {
-            Err(anyhow::anyhow!("Failed to set brightness: error code {}", ret))
+            Err(anyhow::anyhow!(
+                "Failed to set brightness: error code {}",
+                ret
+            ))
         } else {
             Ok(())
         }
@@ -276,7 +275,10 @@ impl Camera {
         };
 
         if ret != 0 {
-            Err(anyhow::anyhow!("Failed to set contrast: error code {}", ret))
+            Err(anyhow::anyhow!(
+                "Failed to set contrast: error code {}",
+                ret
+            ))
         } else {
             Ok(())
         }
@@ -297,7 +299,10 @@ impl Camera {
         };
 
         if ret != 0 {
-            Err(anyhow::anyhow!("Failed to set saturation: error code {}", ret))
+            Err(anyhow::anyhow!(
+                "Failed to set saturation: error code {}",
+                ret
+            ))
         } else {
             Ok(())
         }

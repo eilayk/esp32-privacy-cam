@@ -1,5 +1,8 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
 };
 
@@ -53,10 +56,11 @@ fn encode_frame_with_trace(buffer: &mut Vec<u8>, jpeg_data: &[u8], trace_json: &
 }
 
 impl<'a> VideoHttpServer<'a> {
-    pub fn new<T>(rx: Receiver<TrackedImage<T>>, camera: Arc<Camera>) -> anyhow::Result<Self>
-    where
-        T: JpegImage + Send + 'static,
-    {
+    pub fn new(
+        rx: Receiver<TrackedImage>,
+        camera: Arc<Camera>,
+        inference_enabled: Arc<AtomicBool>,
+    ) -> anyhow::Result<Self> {
         let server_config = http::server::Configuration::default();
 
         let mut http_server = EspHttpServer::new(&server_config)?;
@@ -175,6 +179,25 @@ impl<'a> VideoHttpServer<'a> {
                         }
                     }
                     _ => {}
+                }
+            }
+            req.into_ok_response()?.write_all(b"OK").map(|_| ())
+        })?;
+
+        // Handler to update inference settings
+        let set_inference = Arc::clone(&inference_enabled);
+        http_server.fn_handler("/inference/set", Method::Get, move |req| {
+            let uri = req.uri();
+            let query = uri.split('?').nth(1).unwrap_or("");
+            for param in query.split('&') {
+                let mut parts = param.split('=');
+                let key = parts.next().unwrap_or("");
+                let value = parts.next().unwrap_or("");
+                if key == "enabled" {
+                    if let Ok(enabled) = value.parse::<bool>() {
+                        set_inference.store(enabled, Ordering::Relaxed);
+                        log::info!("Inference enabled: {}", enabled);
+                    }
                 }
             }
             req.into_ok_response()?.write_all(b"OK").map(|_| ())

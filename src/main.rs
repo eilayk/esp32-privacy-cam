@@ -3,10 +3,13 @@ use crate::{
         camera::{Camera, CameraPins},
         esp_dl::PedestrianDetector,
     },
-    types::{IntoTracked, Trace},
+    types::{CameraFrame, Trace},
 };
-use std::sync::Arc;
 use crossbeam::channel::{bounded, TrySendError};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -68,10 +71,15 @@ fn run_app() -> anyhow::Result<()> {
     log::info!("Camera initialized successfully!");
 
     let (tx, rx) = bounded(16);
+    let inference_enabled = Arc::new(AtomicBool::new(true));
 
     // Start HTTP server
     log::info!("Starting HTTP server...");
-    let _video_server = video_server::VideoHttpServer::new(rx, Arc::clone(&camera))?;
+    let _video_server = video_server::VideoHttpServer::new(
+        rx,
+        Arc::clone(&camera),
+        Arc::clone(&inference_enabled),
+    )?;
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
@@ -95,18 +103,24 @@ fn run_app() -> anyhow::Result<()> {
                 if let Ok(frame) = camera.capture() {
                     trace.checkpoint("captured_frame");
 
-                    let result = (|| -> anyhow::Result<crate::libs::esp_dl::OwnedEspDlJpeg> {
-                        let image = person_detector.preprocess(&frame)?;
-                        trace.checkpoint("preprocess_done");
+                    let result: anyhow::Result<CameraFrame> =
+                        if inference_enabled.load(Ordering::Relaxed) {
+                            (|| -> anyhow::Result<CameraFrame> {
+                                let image = person_detector.preprocess(&frame)?;
+                                trace.checkpoint("preprocess_done");
 
-                        let detections = person_detector.inference(&image)?;
-                        trace.checkpoint("inference_done");
+                                let detections = person_detector.inference(&image)?;
+                                trace.checkpoint("inference_done");
 
-                        let annotated_jpeg = person_detector.postprocess(image, &detections)?;
-                        trace.checkpoint("postprocess_done");
+                                let annotated_jpeg = person_detector.postprocess(image, &detections)?;
+                                trace.checkpoint("postprocess_done");
 
-                        Ok(annotated_jpeg)
-                    })();
+                                Ok(CameraFrame::Inferred(annotated_jpeg))
+                            })()
+                        } else {
+                            trace.checkpoint("inference_skipped");
+                            Ok(CameraFrame::Raw(frame))
+                        };
 
                     match result {
                         Ok(annotated_frame) => {

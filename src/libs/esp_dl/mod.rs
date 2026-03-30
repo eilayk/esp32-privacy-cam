@@ -1,4 +1,3 @@
-use core::cell::RefCell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -22,20 +21,20 @@ struct EspDlImageRaw {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 /// Matches pedestrian_detect::detection_t in pedestrian_detect.h
-struct EspDlDetectionRaw {
-    category: i32,
-    score: f32,
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
+pub struct Detection {
+    pub category: i32,
+    pub score: f32,
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 /// Matches pedestrian_detect::detection_list_t in pedestrian_detect.h
 struct EspDlDetectionListRaw {
-    items: *mut EspDlDetectionRaw,
+    items: *mut Detection,
     len: usize,
 }
 
@@ -74,6 +73,30 @@ pub struct EspDlImage {
 }
 
 impl EspDlImage {
+    /// Decode a JPEG image into an RGB888 `EspDlImage`.
+    pub fn from_jpeg<T: JpegImage + ?Sized>(jpeg: &T) -> Result<Self> {
+        let mut raw = EspDlImageRaw {
+            data: core::ptr::null_mut(),
+            data_len: 0,
+            width: 0,
+            height: 0,
+            pix_type: 0,
+            stride: 0,
+        };
+
+        let err =
+            unsafe { esp_dl_decode_jpeg_rgb888(jpeg.data().as_ptr(), jpeg.length(), &mut raw) };
+        if err != ESP_OK {
+            return Err(anyhow!(
+                "esp_dl_decode_jpeg_rgb888 failed: {} ({})",
+                unsafe { cstr_to_str(esp_err_to_name(err) as *const c_void) },
+                err
+            ));
+        }
+
+        Ok(Self { raw })
+    }
+
     /// Get the width of the image in pixels.
     pub fn width(&self) -> u16 {
         self.raw.width
@@ -93,11 +116,6 @@ impl EspDlImage {
     pub fn as_bytes(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts(self.raw.data, self.raw.data_len) }
     }
-
-    /// Decode a JPEG image into an RGB888 `EspDlImage`.
-    pub fn from_jpeg<T: JpegImage + ?Sized>(jpeg: &T) -> Result<Self> {
-        decode_jpeg_rgb888(jpeg.data())
-    }
 }
 
 impl Drop for EspDlImage {
@@ -110,15 +128,41 @@ impl Drop for EspDlImage {
 
 unsafe impl Send for EspDlImage {}
 
-#[derive(Debug, Clone, Copy)]
-pub struct Detection {
-    pub category: i32,
-    pub score: f32,
-    pub left: i32,
-    pub top: i32,
-    pub right: i32,
-    pub bottom: i32,
+/// A wrapper around a list of detections owned by the ESP-DL library.
+pub struct Detections {
+    raw: EspDlDetectionListRaw,
 }
+
+impl Detections {
+    /// Get the detections as a slice.
+    pub fn as_slice(&self) -> &[Detection] {
+        if self.raw.items.is_null() || self.raw.len == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.raw.items, self.raw.len) }
+        }
+    }
+
+    /// Get the number of detections.
+    pub fn len(&self) -> usize {
+        self.raw.len
+    }
+
+    /// Check if there are no detections.
+    pub fn is_empty(&self) -> bool {
+        self.raw.len == 0
+    }
+}
+
+impl Drop for Detections {
+    fn drop(&mut self) {
+        unsafe {
+            esp_dl_detection_list_free(&mut self.raw);
+        }
+    }
+}
+
+unsafe impl Send for Detections {}
 
 /// A wrapper around a JPEG image owned by the ESP-DL library.
 ///
@@ -160,12 +204,9 @@ unsafe impl Send for OwnedEspDlJpeg {}
 /// A pedestrian detector using the ESP-DL library.
 ///
 /// This detector provides a three-stage pipeline (preprocess, inference, postprocess)
-/// to allow for granular timing and performance optimization. It reuses internal
-/// buffers where possible to minimize allocations during the detection loop.
+/// to allow for granular timing and performance optimization.
 pub struct PedestrianDetector {
     model: NonNull<c_void>,
-    detection_cache: RefCell<Vec<Detection>>,
-    raw_detection_buffer: RefCell<EspDlDetectionListRaw>,
 }
 
 impl PedestrianDetector {
@@ -174,14 +215,7 @@ impl PedestrianDetector {
         let model = unsafe { create_pedestrian_detection_model() };
         let model = NonNull::new(model)
             .ok_or_else(|| anyhow!("create_pedestrian_detection_model returned null"))?;
-        Ok(Self {
-            model,
-            detection_cache: RefCell::new(Vec::with_capacity(20)),
-            raw_detection_buffer: RefCell::new(EspDlDetectionListRaw {
-                items: core::ptr::null_mut(),
-                len: 0,
-            }),
-        })
+        Ok(Self { model })
     }
 
     /// Preprocess a JPEG image for inference.
@@ -193,15 +227,15 @@ impl PedestrianDetector {
 
     /// Run inference on a preprocessed image.
     ///
-    /// Returns a list of detections found in the image. This method reuses an internal
-    /// buffer for detection results to minimize allocations.
-    pub fn inference(&self, image: &EspDlImage) -> Result<Vec<Detection>> {
-        let mut raw_list = EspDlDetectionListRaw {
+    /// Returns a list of detections found in the image. The memory is managed by the
+    /// returned `Detections` object and is freed when it is dropped.
+    pub fn inference(&self, image: &EspDlImage) -> Result<Detections> {
+        let mut raw = EspDlDetectionListRaw {
             items: core::ptr::null_mut(),
             len: 0,
         };
 
-        let err = unsafe { pedestrian_detection(self.model.as_ptr(), &image.raw, &mut raw_list) };
+        let err = unsafe { pedestrian_detection(self.model.as_ptr(), &image.raw, &mut raw) };
 
         if err != ESP_OK {
             return Err(anyhow!(
@@ -211,40 +245,7 @@ impl PedestrianDetector {
             ));
         }
 
-        let mut detections = self.detection_cache.borrow_mut();
-        detections.clear();
-
-        if raw_list.len > 0 {
-            if raw_list.items.is_null() {
-                unsafe {
-                    esp_dl_detection_list_free(&mut raw_list);
-                }
-                return Err(anyhow!(
-                    "pedestrian_detection returned null items with non-zero len ({})",
-                    raw_list.len
-                ));
-            }
-
-            unsafe {
-                let raw_slice = core::slice::from_raw_parts(raw_list.items, raw_list.len);
-                for raw in raw_slice {
-                    detections.push(Detection {
-                        category: raw.category,
-                        score: raw.score,
-                        left: raw.left,
-                        top: raw.top,
-                        right: raw.right,
-                        bottom: raw.bottom,
-                    });
-                }
-            }
-        }
-
-        unsafe {
-            esp_dl_detection_list_free(&mut raw_list);
-        }
-
-        Ok(detections.clone())
+        Ok(Detections { raw })
     }
 
     /// Postprocess the results by annotating the image and re-encoding it.
@@ -255,61 +256,11 @@ impl PedestrianDetector {
     pub fn postprocess(
         &self,
         image: EspDlImage,
-        detections: &[Detection],
+        detections: &Detections,
     ) -> Result<OwnedEspDlJpeg> {
-        self.fill_raw_detections(detections);
-        let raw_detections = self.raw_detection_buffer.borrow();
-        self.postprocess_internal(&image, &*raw_detections)
-    }
-
-    fn fill_raw_detections(&self, detections: &[Detection]) {
-        let mut raw_buffer = self.raw_detection_buffer.borrow_mut();
-
-        // If current buffer is smaller than needed, free it and reallocate
-        if raw_buffer.len < detections.len() {
-            if !raw_buffer.items.is_null() {
-                unsafe {
-                    esp_dl_detection_list_free(&mut *raw_buffer);
-                }
-            }
-            if !detections.is_empty() {
-                raw_buffer.items = unsafe {
-                    esp_idf_svc::sys::heap_caps_calloc(
-                        detections.len(),
-                        core::mem::size_of::<EspDlDetectionRaw>(),
-                        esp_idf_svc::sys::MALLOC_CAP_DEFAULT,
-                    ) as *mut EspDlDetectionRaw
-                };
-            }
-        }
-
-        raw_buffer.len = detections.len();
-
-        if !detections.is_empty() && !raw_buffer.items.is_null() {
-            unsafe {
-                let slice = core::slice::from_raw_parts_mut(raw_buffer.items, detections.len());
-                for (i, d) in detections.iter().enumerate() {
-                    slice[i] = EspDlDetectionRaw {
-                        category: d.category,
-                        score: d.score,
-                        left: d.left,
-                        top: d.top,
-                        right: d.right,
-                        bottom: d.bottom,
-                    };
-                }
-            }
-        }
-    }
-
-    fn postprocess_internal(
-        &self,
-        image: &EspDlImage,
-        raw_detections: &EspDlDetectionListRaw,
-    ) -> Result<OwnedEspDlJpeg> {
-        let mut raw_image = image.raw; // Copy the raw struct, but data is shared
+        let mut raw_image = image.raw;
         unsafe {
-            esp_dl_draw_detections(&mut raw_image, raw_detections);
+            esp_dl_draw_detections(&mut raw_image, &detections.raw);
         }
 
         let mut raw_jpeg = EspDlJpegRaw {
@@ -348,37 +299,11 @@ impl Drop for PedestrianDetector {
     fn drop(&mut self) {
         unsafe {
             destroy_pedestrian_detection_model(self.model.as_ptr());
-            let mut raw_buffer = self.raw_detection_buffer.borrow_mut();
-            if !raw_buffer.items.is_null() {
-                esp_dl_detection_list_free(&mut *raw_buffer);
-            }
         }
     }
 }
 
 unsafe impl Send for PedestrianDetector {}
-
-pub fn decode_jpeg_rgb888(jpeg: &[u8]) -> Result<EspDlImage> {
-    let mut raw = EspDlImageRaw {
-        data: core::ptr::null_mut(),
-        data_len: 0,
-        width: 0,
-        height: 0,
-        pix_type: 0,
-        stride: 0,
-    };
-
-    let err = unsafe { esp_dl_decode_jpeg_rgb888(jpeg.as_ptr(), jpeg.len(), &mut raw) };
-    if err != ESP_OK {
-        return Err(anyhow!(
-            "esp_dl_decode_jpeg_rgb888 failed: {} ({})",
-            unsafe { cstr_to_str(esp_err_to_name(err) as *const c_void) },
-            err
-        ));
-    }
-
-    Ok(EspDlImage { raw })
-}
 
 /// Convert a C string pointer to a Rust string slice. If the pointer is null, returns "<null>". If the C string is not valid UTF-8, returns "<invalid utf-8>".
 unsafe fn cstr_to_str(ptr: *const c_void) -> &'static str {

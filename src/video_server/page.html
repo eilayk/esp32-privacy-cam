@@ -266,6 +266,13 @@
                     <input type="range" id="saturation" min="-2" max="2" value="0" oninput="updateSetting('saturation', this.value)">
                     <span id="saturation-val">0</span>
                 </div>
+                <div class="setting-item">
+                    <label for="inference">ML Inference</label>
+                    <select id="inference" onchange="updateInference(this.value === 'on')">
+                        <option value="on" selected>Enabled</option>
+                        <option value="off">Disabled</option>
+                    </select>
+                </div>
             </div>
         </section>
 

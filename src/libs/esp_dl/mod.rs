@@ -17,7 +17,7 @@ struct EspDlImageRaw {
     pix_type: u32,
     stride: usize,
 }
-    
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 /// Matches pedestrian_detect::detection_t in pedestrian_detect.h
@@ -144,13 +144,7 @@ impl PedestrianDetector {
             len: 0,
         };
 
-        let err = unsafe {
-            pedestrian_detection(
-                self.model.as_ptr(),
-                &image.raw,
-                &mut raw_list,
-            )
-        };
+        let err = unsafe { pedestrian_detection(self.model.as_ptr(), &image.raw, &mut raw_list) };
 
         if err != ESP_OK {
             return Err(anyhow!(
@@ -196,7 +190,10 @@ impl PedestrianDetector {
         Ok(detections)
     }
 
-    pub fn detect_and_annotate<T: JpegImage + ?Sized>(&self, image: &T) -> Result<(Vec<Detection>, Vec<u8>)> {
+    pub fn detect_and_annotate<T: JpegImage + ?Sized>(
+        &self,
+        image: &T,
+    ) -> Result<(Vec<Detection>, Vec<u8>)> {
         let mut raw_list = EspDlDetectionListRaw {
             items: core::ptr::null_mut(),
             len: 0,
@@ -263,10 +260,13 @@ impl PedestrianDetector {
                 esp_dl_detection_list_free(&mut raw_list);
                 esp_dl_jpeg_free(&mut raw_jpeg);
             }
-            return Err(anyhow!("pedestrian_detection_annotate_jpeg returned empty JPEG output"));
+            return Err(anyhow!(
+                "pedestrian_detection_annotate_jpeg returned empty JPEG output"
+            ));
         }
 
-        let annotated_jpeg = unsafe { core::slice::from_raw_parts(raw_jpeg.data, raw_jpeg.data_len).to_vec() };
+        let annotated_jpeg =
+            unsafe { core::slice::from_raw_parts(raw_jpeg.data, raw_jpeg.data_len).to_vec() };
 
         unsafe {
             esp_dl_detection_list_free(&mut raw_list);

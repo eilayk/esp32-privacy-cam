@@ -91,6 +91,24 @@ impl Trace {
     }
 }
 
+pub struct SimpleJpeg {
+    pub data: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl JpegImage for SimpleJpeg {
+    fn width(&self) -> usize {
+        self.width
+    }
+    fn height(&self) -> usize {
+        self.height
+    }
+    fn data(&self) -> &[u8] {
+        &self.data
+    }
+}
+
 pub struct TrackedImage<T: JpegImage> {
     pub image: T,
     pub trace: Trace,

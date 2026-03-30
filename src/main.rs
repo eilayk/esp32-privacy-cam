@@ -1,10 +1,12 @@
-use std::{thread, time::Duration};
-
-use crate::
-    {libs::{camera::{Camera, CameraPins},
-    types::{IntoTracked, Trace},
-}, esp_dl::PedestrianDetector};
+use crate::{
+    libs::{
+        camera::{Camera, CameraPins},
+        esp_dl::PedestrianDetector,
+    },
+    types::{IntoTracked, JpegImage, SimpleJpeg, Trace},
+};
 use crossbeam::channel::{bounded, TrySendError};
+
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::prelude::Peripherals,
@@ -13,6 +15,8 @@ use esp_idf_svc::{
     sys::link_patches,
     wifi::{self, BlockingWifi, EspWifi},
 };
+
+use std::{convert::TryInto, thread, time::Duration};
 mod libs;
 mod types;
 mod video_server;
@@ -82,13 +86,18 @@ fn run_app() -> anyhow::Result<()> {
         trace.checkpoint("request_frame");
         if let Ok(frame) = camera.capture() {
             trace.checkpoint("captured_frame");
-            let traced_frame = frame.attach_trace(trace);
-
-            let (detections, annotated_jpeg) = person_detector.detect_and_annotate(&frame)?;
+            let (_, annotated_jpeg) = person_detector.detect_and_annotate(&frame)?;
             trace.checkpoint("inference_done");
 
+            let annotated_frame = SimpleJpeg {
+                data: annotated_jpeg,
+                width: frame.width(),
+                height: frame.height(),
+            }
+            .attach_trace(trace);
+
             // Send the frame to the HTTP server thread
-            match tx.try_send(annotated_jpeg) {
+            match tx.try_send(annotated_frame) {
                 Ok(_) => {
                     if dropped_frames > 0 {
                         log::info!(
@@ -110,3 +119,83 @@ fn run_app() -> anyhow::Result<()> {
                             dropped_frames
                         );
                     }
+                    // Queue is full, increase delay to reduce pressure
+                    if adaptive_delay_ms < 20 {
+                        adaptive_delay_ms = adaptive_delay_ms.saturating_add(2);
+                    }
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    log::error!("Frame queue disconnected; stopping capture loop");
+                    break;
+                }
+            }
+        }
+        // Adaptive throttling: adjusts between 5-20ms based on queue pressure
+        thread::sleep(Duration::from_millis(adaptive_delay_ms));
+    }
+    Ok(())
+}
+
+fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()> {
+    let wifi_config = wifi::Configuration::Client(wifi::ClientConfiguration {
+        ssid: SSID.try_into().unwrap(),
+        password: PASSWORD.try_into().unwrap(),
+        auth_method: wifi::AuthMethod::WPA2Personal,
+        ..Default::default()
+    });
+
+    log::info!("Setting WiFi configuration...");
+    wifi.set_configuration(&wifi_config)?;
+
+    log::info!("Starting WiFi...");
+    wifi.start()?;
+
+    let mut retry_count = 0;
+    const MAX_RETRIES: u32 = 10;
+
+    loop {
+        log::info!(
+            "Connecting to WiFi '{}' (attempt {}/{})...",
+            SSID,
+            retry_count + 1,
+            MAX_RETRIES
+        );
+
+        match wifi.connect() {
+            Ok(_) => {
+                log::info!("Waiting for IP address (DHCP)...");
+                match wifi.wait_netif_up() {
+                    Ok(_) => {
+                        log::info!("WiFi connected and IP obtained!");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to obtain IP address: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to connect to WiFi: {:?}", e);
+            }
+        }
+
+        retry_count += 1;
+        if retry_count >= MAX_RETRIES {
+            anyhow::bail!("Failed to connect to WiFi after {} attempts", MAX_RETRIES);
+        }
+
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s... up to ~30s max
+        let delay_secs = (2u64.pow(retry_count)).min(30);
+        let delay = Duration::from_secs(delay_secs);
+
+        log::info!("Retrying in {:?}...", delay);
+        let _ = wifi.disconnect();
+        thread::sleep(delay);
+    }
+}
+
+fn main() {
+    if let Err(err) = run_app() {
+        log::error!("Application error: {:?}", err);
+    }
+}

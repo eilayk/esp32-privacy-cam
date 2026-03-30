@@ -1,10 +1,12 @@
-use std::{thread, time::Duration};
-
 use crate::{
-    libs::camera::{Camera, CameraPins},
+    libs::{
+        camera::{Camera, CameraPins},
+        esp_dl::PedestrianDetector,
+    },
     types::{IntoTracked, Trace},
 };
 use crossbeam::channel::{bounded, TrySendError};
+
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::prelude::Peripherals,
@@ -13,12 +15,16 @@ use esp_idf_svc::{
     sys::link_patches,
     wifi::{self, BlockingWifi, EspWifi},
 };
+
+use std::{convert::TryInto, thread, time::Duration};
 mod libs;
 mod types;
 mod video_server;
 
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
+
+const INFERENCE_THREAD_STACK_SIZE: usize = 16 * 1024; // 16 KB
 
 fn run_app() -> anyhow::Result<()> {
     link_patches();
@@ -36,6 +42,8 @@ fn run_app() -> anyhow::Result<()> {
     connect_wifi(&mut wifi)?;
     let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
     log::info!("Connected to WiFi! IP address: {}", ip_info.ip);
+
+    let person_detector = PedestrianDetector::new()?;
 
     log::info!("Initializing camera...");
     let camera_pins = CameraPins {
@@ -66,60 +74,93 @@ fn run_app() -> anyhow::Result<()> {
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
-    // Number of frames dropped due to backpressure; used for adaptive throttling
-    let mut dropped_frames: u32 = 0;
-    // How long to sleep between capture attempts; starts low for high fps but increases if queue is
-    // full
-    let mut adaptive_delay_ms: u64 = 5; // Start at 5ms (max ~200fps)
+    // Run the capture and inference loop in a separate thread
+    let _capture_thread = std::thread::Builder::new()
+        .stack_size(INFERENCE_THREAD_STACK_SIZE)
+        .name("capture_loop".to_string())
+        .spawn(move || {
+            // Number of frames dropped due to backpressure; used for adaptive throttling
+            let mut dropped_frames: u32 = 0;
+            // How long to sleep between capture attempts; starts low for high fps but increases if queue is
+            // full
+            let mut adaptive_delay_ms: u64 = 5; // Start at 5ms (max ~200fps)
 
-    loop {
-        // Capture a frame from the camera
-        let mut trace = Trace::start();
-        trace.dropped_frames = dropped_frames;
-        trace.adaptive_delay_ms = adaptive_delay_ms;
-        trace.checkpoint("request_frame");
-        if let Ok(frame) = camera.capture() {
-            trace.checkpoint("captured_frame");
-            let traced_frame = frame.attach_trace(trace);
+            loop {
+                // Capture a frame from the camera
+                let mut trace = Trace::start();
+                trace.dropped_frames = dropped_frames;
+                trace.adaptive_delay_ms = adaptive_delay_ms;
+                trace.checkpoint("request_frame");
+                if let Ok(frame) = camera.capture() {
+                    trace.checkpoint("captured_frame");
 
-            // Send the frame to the HTTP server thread
-            match tx.try_send(traced_frame) {
-                Ok(_) => {
-                    if dropped_frames > 0 {
-                        log::info!(
-                            "Frame queue recovered after dropping {} frame(s)",
-                            dropped_frames
-                        );
-                        dropped_frames = 0;
-                    }
-                    // Queue is healthy, can reduce delay slightly for higher fps
-                    if adaptive_delay_ms > 5 {
-                        adaptive_delay_ms = adaptive_delay_ms.saturating_sub(1);
+                    let result = (|| -> anyhow::Result<crate::libs::esp_dl::OwnedEspDlJpeg> {
+                        let image = person_detector.preprocess(&frame)?;
+                        trace.checkpoint("preprocess_done");
+
+                        let detections = person_detector.inference(&image)?;
+                        trace.checkpoint("inference_done");
+
+                        let annotated_jpeg = person_detector.postprocess(image, &detections)?;
+                        trace.checkpoint("postprocess_done");
+
+                        Ok(annotated_jpeg)
+                    })();
+
+                    match result {
+                        Ok(annotated_frame) => {
+                            let tracked_frame = annotated_frame.attach_trace(trace);
+
+                            // Send the frame to the HTTP server thread
+                            match tx.try_send(tracked_frame) {
+                                Ok(_) => {
+                                    if dropped_frames > 0 {
+                                        log::info!(
+                                            "Frame queue recovered after dropping {} frame(s)",
+                                            dropped_frames
+                                        );
+                                        dropped_frames = 0;
+                                    }
+                                    // Queue is healthy, can reduce delay slightly for higher fps
+                                    if adaptive_delay_ms > 5 {
+                                        adaptive_delay_ms = adaptive_delay_ms.saturating_sub(1);
+                                    }
+                                }
+                                Err(TrySendError::Full(_)) => {
+                                    dropped_frames = dropped_frames.saturating_add(1);
+                                    if dropped_frames == 1 || dropped_frames % 100 == 0 {
+                                        log::warn!(
+                                            "Frame queue is full; dropping frame(s), dropped_count={}",
+                                            dropped_frames
+                                        );
+                                    }
+                                    // Queue is full, increase delay to reduce pressure
+                                    if adaptive_delay_ms < 20 {
+                                        adaptive_delay_ms = adaptive_delay_ms.saturating_add(2);
+                                    }
+                                }
+                                Err(TrySendError::Disconnected(_)) => {
+                                    log::error!("Frame queue disconnected; stopping capture loop");
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Inference error: {:?}", e);
+                        }
                     }
                 }
-                Err(TrySendError::Full(_)) => {
-                    dropped_frames = dropped_frames.saturating_add(1);
-                    if dropped_frames == 1 || dropped_frames % 100 == 0 {
-                        log::warn!(
-                            "Frame queue is full; dropping frame(s), dropped_count={}",
-                            dropped_frames
-                        );
-                    }
-                    // Queue is full, increase delay to reduce pressure
-                    if adaptive_delay_ms < 20 {
-                        adaptive_delay_ms = adaptive_delay_ms.saturating_add(2);
-                    }
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    log::error!("Frame queue disconnected; stopping capture loop");
-                    break;
-                }
+                // Adaptive throttling: adjusts between 5-20ms based on queue pressure
+                // Yields to other tasks (including IDLE task)
+                std::thread::sleep(std::time::Duration::from_millis(adaptive_delay_ms));
             }
-        }
-        // Adaptive throttling: adjusts between 5-20ms based on queue pressure
-        thread::sleep(Duration::from_millis(adaptive_delay_ms));
-    }
+        })?;
 
+    // Keep the main task alive
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    #[allow(unreachable_code)]
     Ok(())
 }
 

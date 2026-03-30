@@ -24,6 +24,8 @@ mod video_server;
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
+const INFERENCE_THREAD_STACK_SIZE: usize = 16 * 1024; // 16 KB
+
 fn run_app() -> anyhow::Result<()> {
     link_patches();
     EspLogger::initialize_default();
@@ -72,67 +74,86 @@ fn run_app() -> anyhow::Result<()> {
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 
-    // Number of frames dropped due to backpressure; used for adaptive throttling
-    let mut dropped_frames: u32 = 0;
-    // How long to sleep between capture attempts; starts low for high fps but increases if queue is
-    // full
-    let mut adaptive_delay_ms: u64 = 5; // Start at 5ms (max ~200fps)
+    // Run the capture and inference loop in a separate thread
+    let _capture_thread = std::thread::Builder::new()
+        .stack_size(INFERENCE_THREAD_STACK_SIZE)
+        .name("capture_loop".to_string())
+        .spawn(move || {
+            // Number of frames dropped due to backpressure; used for adaptive throttling
+            let mut dropped_frames: u32 = 0;
+            // How long to sleep between capture attempts; starts low for high fps but increases if queue is
+            // full
+            let mut adaptive_delay_ms: u64 = 5; // Start at 5ms (max ~200fps)
 
+            loop {
+                // Capture a frame from the camera
+                let mut trace = Trace::start();
+                trace.dropped_frames = dropped_frames;
+                trace.adaptive_delay_ms = adaptive_delay_ms;
+                trace.checkpoint("request_frame");
+                if let Ok(frame) = camera.capture() {
+                    trace.checkpoint("captured_frame");
+                    match person_detector.detect_and_annotate(&frame) {
+                        Ok((_, annotated_jpeg)) => {
+                            trace.checkpoint("inference_done");
+
+                            let annotated_frame = SimpleJpeg {
+                                data: annotated_jpeg,
+                                width: frame.width(),
+                                height: frame.height(),
+                            }
+                            .attach_trace(trace);
+
+                            // Send the frame to the HTTP server thread
+                            match tx.try_send(annotated_frame) {
+                                Ok(_) => {
+                                    if dropped_frames > 0 {
+                                        log::info!(
+                                            "Frame queue recovered after dropping {} frame(s)",
+                                            dropped_frames
+                                        );
+                                        dropped_frames = 0;
+                                    }
+                                    // Queue is healthy, can reduce delay slightly for higher fps
+                                    if adaptive_delay_ms > 5 {
+                                        adaptive_delay_ms = adaptive_delay_ms.saturating_sub(1);
+                                    }
+                                }
+                                Err(TrySendError::Full(_)) => {
+                                    dropped_frames = dropped_frames.saturating_add(1);
+                                    if dropped_frames == 1 || dropped_frames % 100 == 0 {
+                                        log::warn!(
+                                            "Frame queue is full; dropping frame(s), dropped_count={}",
+                                            dropped_frames
+                                        );
+                                    }
+                                    // Queue is full, increase delay to reduce pressure
+                                    if adaptive_delay_ms < 20 {
+                                        adaptive_delay_ms = adaptive_delay_ms.saturating_add(2);
+                                    }
+                                }
+                                Err(TrySendError::Disconnected(_)) => {
+                                    log::error!("Frame queue disconnected; stopping capture loop");
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Inference error: {:?}", e);
+                        }
+                    }
+                }
+                // Adaptive throttling: adjusts between 5-20ms based on queue pressure
+                // Yields to other tasks (including IDLE task)
+                std::thread::sleep(std::time::Duration::from_millis(adaptive_delay_ms));
+            }
+        })?;
+
+    // Keep the main task alive
     loop {
-        // Capture a frame from the camera
-        let mut trace = Trace::start();
-        trace.dropped_frames = dropped_frames;
-        trace.adaptive_delay_ms = adaptive_delay_ms;
-        trace.checkpoint("request_frame");
-        if let Ok(frame) = camera.capture() {
-            trace.checkpoint("captured_frame");
-            let (_, annotated_jpeg) = person_detector.detect_and_annotate(&frame)?;
-            trace.checkpoint("inference_done");
-
-            let annotated_frame = SimpleJpeg {
-                data: annotated_jpeg,
-                width: frame.width(),
-                height: frame.height(),
-            }
-            .attach_trace(trace);
-
-            // Send the frame to the HTTP server thread
-            match tx.try_send(annotated_frame) {
-                Ok(_) => {
-                    if dropped_frames > 0 {
-                        log::info!(
-                            "Frame queue recovered after dropping {} frame(s)",
-                            dropped_frames
-                        );
-                        dropped_frames = 0;
-                    }
-                    // Queue is healthy, can reduce delay slightly for higher fps
-                    if adaptive_delay_ms > 5 {
-                        adaptive_delay_ms = adaptive_delay_ms.saturating_sub(1);
-                    }
-                }
-                Err(TrySendError::Full(_)) => {
-                    dropped_frames = dropped_frames.saturating_add(1);
-                    if dropped_frames == 1 || dropped_frames % 100 == 0 {
-                        log::warn!(
-                            "Frame queue is full; dropping frame(s), dropped_count={}",
-                            dropped_frames
-                        );
-                    }
-                    // Queue is full, increase delay to reduce pressure
-                    if adaptive_delay_ms < 20 {
-                        adaptive_delay_ms = adaptive_delay_ms.saturating_add(2);
-                    }
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    log::error!("Frame queue disconnected; stopping capture loop");
-                    break;
-                }
-            }
-        }
-        // Adaptive throttling: adjusts between 5-20ms based on queue pressure
-        thread::sleep(Duration::from_millis(adaptive_delay_ms));
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
+    #[allow(unreachable_code)]
     Ok(())
 }
 

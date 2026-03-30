@@ -11,7 +11,16 @@ use esp_idf_svc::{
             camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_fb_t,
             camera_grab_mode_t_CAMERA_GRAB_LATEST, esp_camera_deinit, esp_camera_fb_get,
             esp_camera_fb_return, esp_camera_init, esp_camera_sensor_get,
-            framesize_t_FRAMESIZE_QVGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
+            framesize_t,
+            framesize_t_FRAMESIZE_QQVGA,
+            framesize_t_FRAMESIZE_QVGA,
+            framesize_t_FRAMESIZE_VGA,
+            framesize_t_FRAMESIZE_SVGA,
+            framesize_t_FRAMESIZE_XGA,
+            framesize_t_FRAMESIZE_HD,
+            framesize_t_FRAMESIZE_SXGA,
+            framesize_t_FRAMESIZE_UXGA,
+            ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
             pixformat_t_PIXFORMAT_JPEG,
         },
         ESP_OK,
@@ -19,6 +28,46 @@ use esp_idf_svc::{
 };
 
 use crate::types::JpegImage;
+
+pub enum Resolution {
+    QQVGA,
+    QVGA,
+    VGA,
+    SVGA,
+    XGA,
+    HD,
+    SXGA,
+    UXGA,
+}
+
+impl Resolution {
+    pub fn to_framesize(&self) -> framesize_t {
+        match self {
+            Resolution::QQVGA => framesize_t_FRAMESIZE_QQVGA,
+            Resolution::QVGA => framesize_t_FRAMESIZE_QVGA,
+            Resolution::VGA => framesize_t_FRAMESIZE_VGA,
+            Resolution::SVGA => framesize_t_FRAMESIZE_SVGA,
+            Resolution::XGA => framesize_t_FRAMESIZE_XGA,
+            Resolution::HD => framesize_t_FRAMESIZE_HD,
+            Resolution::SXGA => framesize_t_FRAMESIZE_SXGA,
+            Resolution::UXGA => framesize_t_FRAMESIZE_UXGA,
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "qqvga" => Some(Resolution::QQVGA),
+            "qvga" => Some(Resolution::QVGA),
+            "vga" => Some(Resolution::VGA),
+            "svga" => Some(Resolution::SVGA),
+            "xga" => Some(Resolution::XGA),
+            "hd" => Some(Resolution::HD),
+            "sxga" => Some(Resolution::SXGA),
+            "uxga" => Some(Resolution::UXGA),
+            _ => None,
+        }
+    }
+}
 
 // pin mappings defined here
 // https://docs.freenove.com/projects/fnk0083/en/latest/fnk0083/codes/C/Preface.html#cam-pin
@@ -146,6 +195,111 @@ impl Camera {
                 fb,
                 _camera: Arc::clone(self),
             })
+        }
+    }
+
+    pub fn set_resolution(&self, resolution: Resolution) -> anyhow::Result<()> {
+        let sensor = unsafe { esp_camera_sensor_get() };
+        if sensor.is_null() {
+            return Err(anyhow::anyhow!("Failed to get camera sensor"));
+        }
+
+        let ret = unsafe {
+            if let Some(set_framesize) = (*sensor).set_framesize {
+                set_framesize(sensor, resolution.to_framesize())
+            } else {
+                -1
+            }
+        };
+
+        if ret != 0 {
+            Err(anyhow::anyhow!("Failed to set resolution: error code {}", ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn set_quality(&self, quality: u8) -> anyhow::Result<()> {
+        let sensor = unsafe { esp_camera_sensor_get() };
+        if sensor.is_null() {
+            return Err(anyhow::anyhow!("Failed to get camera sensor"));
+        }
+
+        let ret = unsafe {
+            if let Some(set_quality) = (*sensor).set_quality {
+                set_quality(sensor, quality.into())
+            } else {
+                -1
+            }
+        };
+
+        if ret != 0 {
+            Err(anyhow::anyhow!("Failed to set quality: error code {}", ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn set_brightness(&self, brightness: i8) -> anyhow::Result<()> {
+        let sensor = unsafe { esp_camera_sensor_get() };
+        if sensor.is_null() {
+            return Err(anyhow::anyhow!("Failed to get camera sensor"));
+        }
+
+        let ret = unsafe {
+            if let Some(set_brightness) = (*sensor).set_brightness {
+                set_brightness(sensor, brightness.into())
+            } else {
+                -1
+            }
+        };
+
+        if ret != 0 {
+            Err(anyhow::anyhow!("Failed to set brightness: error code {}", ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn set_contrast(&self, contrast: i8) -> anyhow::Result<()> {
+        let sensor = unsafe { esp_camera_sensor_get() };
+        if sensor.is_null() {
+            return Err(anyhow::anyhow!("Failed to get camera sensor"));
+        }
+
+        let ret = unsafe {
+            if let Some(set_contrast) = (*sensor).set_contrast {
+                set_contrast(sensor, contrast.into())
+            } else {
+                -1
+            }
+        };
+
+        if ret != 0 {
+            Err(anyhow::anyhow!("Failed to set contrast: error code {}", ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn set_saturation(&self, saturation: i8) -> anyhow::Result<()> {
+        let sensor = unsafe { esp_camera_sensor_get() };
+        if sensor.is_null() {
+            return Err(anyhow::anyhow!("Failed to get camera sensor"));
+        }
+
+        let ret = unsafe {
+            if let Some(set_saturation) = (*sensor).set_saturation {
+                set_saturation(sensor, saturation.into())
+            } else {
+                -1
+            }
+        };
+
+        if ret != 0 {
+            Err(anyhow::anyhow!("Failed to set saturation: error code {}", ret))
+        } else {
+            Ok(())
         }
     }
 }

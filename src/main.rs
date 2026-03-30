@@ -5,6 +5,7 @@ use crate::{
     },
     types::{IntoTracked, Trace},
 };
+use std::sync::Arc;
 use crossbeam::channel::{bounded, TrySendError};
 
 use esp_idf_svc::{
@@ -70,7 +71,7 @@ fn run_app() -> anyhow::Result<()> {
 
     // Start HTTP server
     log::info!("Starting HTTP server...");
-    let _video_server = video_server::VideoHttpServer::new(rx)?;
+    let _video_server = video_server::VideoHttpServer::new(rx, Arc::clone(&camera))?;
     log::info!("HTTP server started successfully!");
     log::info!("Test the http server at http://{}/", ip_info.ip);
 

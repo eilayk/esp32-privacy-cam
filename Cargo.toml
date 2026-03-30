@@ -45,6 +45,11 @@ bindings_header = "src/libs/bindings.h"
 bindings_module = "pedestrian_detect"
 
 [[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/human_face_detect", version = "0.3.0" }
+bindings_header = "src/libs/bindings.h"
+bindings_module = "human_face_detect"
+
+[[package.metadata.esp-idf-sys.extra_components]]
 component_dirs = ["src/libs/esp_dl"]
 
 # --- Optional Embassy Integration ---

@@ -78,6 +78,23 @@ void destroy_pedestrian_detection_model(void *model);
 // - `out_result`: Pointer to the output detection list structure that will be filled with the detection results.
 esp_err_t pedestrian_detection(void *model, const esp_dl_image_t *input_image, esp_dl_detection_list_t *out_result);
 
+// Creates a human face detection model instance. Destroy it with `destroy_face_detection_model()`.
+// Returns a pointer to the model instance, or null on failure.
+void *create_face_detection_model(void);
+
+// Destroys a human face detection model instance created by `create_face_detection_model()`.
+// Parameters:
+// - `model`: Pointer to the model instance to destroy. If null, this function does nothing.
+void destroy_face_detection_model(void *model);
+
+// Runs human face detection on the input image and writes detections to `out_result`.
+// The caller must free `out_result` with `esp_dl_detection_list_free()`.
+// Parameters:
+// - `model`: Pointer to the human face detection model instance.
+// - `input_image`: Pointer to the input image structure containing the image data and metadata.
+// - `out_result`: Pointer to the output detection list structure that will be filled with the detection results.
+esp_err_t face_detection(void *model, const esp_dl_image_t *input_image, esp_dl_detection_list_t *out_result);
+
 // Draws hollow rectangles around detections on the given image.
 // Parameters:
 // - `image`: Pointer to the image structure to draw on.
@@ -106,6 +123,22 @@ esp_err_t pedestrian_detection_annotate_jpeg(void *model,
 											 size_t jpeg_len,
 											 esp_dl_detection_list_t *out_result,
 											 esp_dl_jpeg_t *out_jpeg);
+
+// Runs human face detection on JPEG input, draws hollow rectangles around detections,
+// and re-encodes the annotated frame to JPEG.
+// The caller must free `out_result` with `esp_dl_detection_list_free()` and
+// `out_jpeg` with `esp_dl_jpeg_free()`.
+// Parameters:
+// - `model`: Pointer to the human face detection model instance.
+// - `jpeg_data`: Pointer to input JPEG bytes.
+// - `jpeg_len`: Length of input JPEG bytes.
+// - `out_result`: Detection list output.
+// - `out_jpeg`: Annotated JPEG output.
+esp_err_t face_detection_annotate_jpeg(void *model,
+										 const uint8_t *jpeg_data,
+										 size_t jpeg_len,
+										 esp_dl_detection_list_t *out_result,
+										 esp_dl_jpeg_t *out_jpeg);
 
 // Frees detection list memory allocated by `pedestrian_detection()`.
 // Parameters:

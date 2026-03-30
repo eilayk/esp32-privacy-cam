@@ -54,15 +54,24 @@ unsafe extern "C" {
     ) -> esp_err_t;
 
     fn esp_dl_image_free(image: *mut EspDlImageRaw);
+fn create_pedestrian_detection_model() -> *mut c_void;
+fn destroy_pedestrian_detection_model(model: *mut c_void);
+fn pedestrian_detection(
+    model: *mut c_void,
+    input_image: *const EspDlImageRaw,
+    out_result: *mut EspDlDetectionListRaw,
+) -> esp_err_t;
 
-    fn create_pedestrian_detection_model() -> *mut c_void;
-    fn destroy_pedestrian_detection_model(model: *mut c_void);
-    fn pedestrian_detection(
-        model: *mut c_void,
-        input_image: *const EspDlImageRaw,
-        out_result: *mut EspDlDetectionListRaw,
-    ) -> esp_err_t;
-    fn esp_dl_draw_detections(image: *mut EspDlImageRaw, detections: *const EspDlDetectionListRaw);
+fn create_face_detection_model() -> *mut c_void;
+fn destroy_face_detection_model(model: *mut c_void);
+fn face_detection(
+    model: *mut c_void,
+    input_image: *const EspDlImageRaw,
+    out_result: *mut EspDlDetectionListRaw,
+) -> esp_err_t;
+
+fn esp_dl_draw_detections(image: *mut EspDlImageRaw, detections: *const EspDlDetectionListRaw);
+
     fn esp_dl_encode_jpeg(image: *const EspDlImageRaw, out_jpeg: *mut EspDlJpegRaw) -> esp_err_t;
     fn esp_dl_detection_list_free(result: *mut EspDlDetectionListRaw);
     fn esp_dl_jpeg_free(jpeg: *mut EspDlJpegRaw);
@@ -304,6 +313,107 @@ impl Drop for PedestrianDetector {
 }
 
 unsafe impl Send for PedestrianDetector {}
+
+/// A human face detector using the ESP-DL library.
+pub struct FaceDetector {
+    model: NonNull<c_void>,
+}
+
+impl FaceDetector {
+    /// Create a new face detector instance.
+    pub fn new() -> Result<Self> {
+        let model = unsafe { create_face_detection_model() };
+        let model = NonNull::new(model)
+            .ok_or_else(|| anyhow!("create_face_detection_model returned null"))?;
+        Ok(Self { model })
+    }
+
+    /// Preprocess a JPEG image for inference.
+    ///
+    /// This decodes the input JPEG into an RGB888 image buffer suitable for the model.
+    pub fn preprocess<T: JpegImage + ?Sized>(&self, image: &T) -> Result<EspDlImage> {
+        EspDlImage::from_jpeg(image)
+    }
+
+    /// Run inference on a preprocessed image.
+    ///
+    /// Returns a list of detections found in the image. The memory is managed by the
+    /// returned `Detections` object and is freed when it is dropped.
+    pub fn inference(&self, image: &EspDlImage) -> Result<Detections> {
+        let mut raw = EspDlDetectionListRaw {
+            items: core::ptr::null_mut(),
+            len: 0,
+        };
+
+        let err = unsafe { face_detection(self.model.as_ptr(), &image.raw, &mut raw) };
+
+        if err != ESP_OK {
+            return Err(anyhow!(
+                "face_detection failed: {} ({})",
+                unsafe { cstr_to_str(esp_err_to_name(err) as *const c_void) },
+                err
+            ));
+        }
+
+        Ok(Detections { raw })
+    }
+
+    /// Postprocess the results by annotating the image and re-encoding it.
+    ///
+    /// This draws detection boxes onto the provided `EspDlImage` and then encodes
+    /// the result back into a JPEG format. Returns an `OwnedEspDlJpeg` containing
+    /// the final annotated image.
+    pub fn postprocess(
+        &self,
+        image: EspDlImage,
+        detections: &Detections,
+    ) -> Result<OwnedEspDlJpeg> {
+        let mut raw_image = image.raw;
+        unsafe {
+            esp_dl_draw_detections(&mut raw_image, &detections.raw);
+        }
+
+        let mut raw_jpeg = EspDlJpegRaw {
+            data: core::ptr::null_mut(),
+            data_len: 0,
+        };
+
+        let err = unsafe { esp_dl_encode_jpeg(&raw_image, &mut raw_jpeg) };
+        if err != ESP_OK {
+            unsafe {
+                esp_dl_jpeg_free(&mut raw_jpeg);
+            }
+            return Err(anyhow!(
+                "esp_dl_encode_jpeg failed: {} ({})",
+                unsafe { cstr_to_str(esp_err_to_name(err) as *const c_void) },
+                err
+            ));
+        }
+
+        if raw_jpeg.data.is_null() || raw_jpeg.data_len == 0 {
+            unsafe {
+                esp_dl_jpeg_free(&mut raw_jpeg);
+            }
+            return Err(anyhow!("esp_dl_encode_jpeg returned empty JPEG output"));
+        }
+
+        Ok(OwnedEspDlJpeg {
+            raw: raw_jpeg,
+            width: image.width() as usize,
+            height: image.height() as usize,
+        })
+    }
+}
+
+impl Drop for FaceDetector {
+    fn drop(&mut self) {
+        unsafe {
+            destroy_face_detection_model(self.model.as_ptr());
+        }
+    }
+}
+
+unsafe impl Send for FaceDetector {}
 
 /// Convert a C string pointer to a Rust string slice. If the pointer is null, returns "<null>". If the C string is not valid UTF-8, returns "<invalid utf-8>".
 unsafe fn cstr_to_str(ptr: *const c_void) -> &'static str {

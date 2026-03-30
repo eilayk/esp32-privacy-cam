@@ -1,7 +1,7 @@
 use crate::{
     libs::{
         camera::{Camera, CameraPins},
-        esp_dl::PedestrianDetector,
+        esp_dl::{FaceDetector, PedestrianDetector},
     },
     types::{CameraFrame, Trace},
 };
@@ -47,7 +47,8 @@ fn run_app() -> anyhow::Result<()> {
     let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
     log::info!("Connected to WiFi! IP address: {}", ip_info.ip);
 
-    let person_detector = PedestrianDetector::new()?;
+    // let detector = PedestrianDetector::new()?;
+    let detector = FaceDetector::new()?;
 
     log::info!("Initializing camera...");
     let camera_pins = CameraPins {
@@ -106,13 +107,13 @@ fn run_app() -> anyhow::Result<()> {
                     let result: anyhow::Result<CameraFrame> =
                         if inference_enabled.load(Ordering::Relaxed) {
                             (|| -> anyhow::Result<CameraFrame> {
-                                let image = person_detector.preprocess(&frame)?;
+                                let image = detector.preprocess(&frame)?;
                                 trace.checkpoint("preprocess_done");
 
-                                let detections = person_detector.inference(&image)?;
+                                let detections = detector.inference(&image)?;
                                 trace.checkpoint("inference_done");
 
-                                let annotated_jpeg = person_detector.postprocess(image, &detections)?;
+                                let annotated_jpeg = detector.postprocess(image, &detections)?;
                                 trace.checkpoint("postprocess_done");
 
                                 Ok(CameraFrame::Inferred(annotated_jpeg))

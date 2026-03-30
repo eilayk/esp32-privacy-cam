@@ -11,7 +11,7 @@ use esp_idf_svc::{
             camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_fb_t,
             camera_grab_mode_t_CAMERA_GRAB_LATEST, esp_camera_deinit, esp_camera_fb_get,
             esp_camera_fb_return, esp_camera_init, esp_camera_sensor_get,
-            framesize_t_FRAMESIZE_VGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
+            framesize_t_FRAMESIZE_QVGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
             pixformat_t_PIXFORMAT_JPEG,
         },
         ESP_OK,
@@ -104,9 +104,9 @@ impl Camera {
             ledc_channel: ledc_channel_t_LEDC_CHANNEL_0,
 
             pixel_format: pixformat_t_PIXFORMAT_JPEG,
-            frame_size: framesize_t_FRAMESIZE_VGA,
+            frame_size: framesize_t_FRAMESIZE_QVGA,
 
-            jpeg_quality: 20,
+            jpeg_quality: 40,
             fb_count: 4,
             fb_location: camera_fb_location_t_CAMERA_FB_IN_PSRAM,
             grab_mode: camera_grab_mode_t_CAMERA_GRAB_LATEST,

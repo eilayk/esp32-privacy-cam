@@ -10,8 +10,9 @@ use esp_idf_svc::{
             camera_config_t, camera_config_t__bindgen_ty_1, camera_config_t__bindgen_ty_2,
             camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_fb_t,
             camera_grab_mode_t_CAMERA_GRAB_LATEST, esp_camera_deinit, esp_camera_fb_get,
-            esp_camera_fb_return, esp_camera_init, framesize_t_FRAMESIZE_VGA,
-            ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0, pixformat_t_PIXFORMAT_JPEG,
+            esp_camera_fb_return, esp_camera_init, esp_camera_sensor_get,
+            framesize_t_FRAMESIZE_VGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
+            pixformat_t_PIXFORMAT_JPEG,
         },
         ESP_OK,
     },
@@ -113,25 +114,39 @@ impl Camera {
         };
 
         let ret = unsafe { esp_camera_init(&config) };
-        return match ret {
-            ESP_OK => Ok(Arc::new(Self)),
-            _ => Err(anyhow::anyhow!(
+        if ret != ESP_OK {
+            return Err(anyhow::anyhow!(
                 "Failed to initialize camera: error code {}",
                 ret
-            )),
-        };
+            ));
+        }
+
+        // Flip the image vertically and horizontally
+        let sensor = unsafe { esp_camera_sensor_get() };
+        if !sensor.is_null() {
+            unsafe {
+                if let Some(set_vflip) = (*sensor).set_vflip {
+                    set_vflip(sensor, 1);
+                }
+                if let Some(set_hmirror) = (*sensor).set_hmirror {
+                    set_hmirror(sensor, 1);
+                }
+            }
+        }
+
+        Ok(Arc::new(Self))
     }
 
     pub fn capture(self: &Arc<Self>) -> anyhow::Result<impl JpegImage + Send + 'static> {
         let fb = unsafe { esp_camera_fb_get() };
-        return if fb.is_null() {
+        if fb.is_null() {
             Err(anyhow::anyhow!("Failed to capture frame"))
         } else {
             Ok(Frame {
                 fb,
                 _camera: Arc::clone(self),
             })
-        };
+        }
     }
 }
 

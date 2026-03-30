@@ -78,6 +78,19 @@ void destroy_pedestrian_detection_model(void *model);
 // - `out_result`: Pointer to the output detection list structure that will be filled with the detection results.
 esp_err_t pedestrian_detection(void *model, const esp_dl_image_t *input_image, esp_dl_detection_list_t *out_result);
 
+// Draws hollow rectangles around detections on the given image.
+// Parameters:
+// - `image`: Pointer to the image structure to draw on.
+// - `detections`: Pointer to the detection list structure containing the detections to draw.
+void esp_dl_draw_detections(esp_dl_image_t *image, const esp_dl_detection_list_t *detections);
+
+// Encodes the given image to JPEG format.
+// The caller must free `out_jpeg` with `esp_dl_jpeg_free()`.
+// Parameters:
+// - `image`: Pointer to the image structure to encode.
+// - `out_jpeg`: Pointer to the output JPEG structure that will be filled with the encoded JPEG data.
+esp_err_t esp_dl_encode_jpeg(const esp_dl_image_t *image, esp_dl_jpeg_t *out_jpeg);
+
 // Runs pedestrian detection on JPEG input, draws hollow rectangles around detections,
 // and re-encodes the annotated frame to JPEG.
 // The caller must free `out_result` with `esp_dl_detection_list_free()` and

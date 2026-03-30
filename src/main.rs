@@ -3,7 +3,7 @@ use crate::{
         camera::{Camera, CameraPins},
         esp_dl::PedestrianDetector,
     },
-    types::{IntoTracked, JpegImage, SimpleJpeg, Trace},
+    types::{IntoTracked, Trace},
 };
 use crossbeam::channel::{bounded, TrySendError};
 
@@ -93,19 +93,26 @@ fn run_app() -> anyhow::Result<()> {
                 trace.checkpoint("request_frame");
                 if let Ok(frame) = camera.capture() {
                     trace.checkpoint("captured_frame");
-                    match person_detector.detect_and_annotate(&frame) {
-                        Ok((_, annotated_jpeg)) => {
-                            trace.checkpoint("inference_done");
 
-                            let annotated_frame = SimpleJpeg {
-                                data: annotated_jpeg,
-                                width: frame.width(),
-                                height: frame.height(),
-                            }
-                            .attach_trace(trace);
+                    let result = (|| -> anyhow::Result<crate::libs::esp_dl::OwnedEspDlJpeg> {
+                        let image = person_detector.preprocess(&frame)?;
+                        trace.checkpoint("preprocess_done");
+
+                        let detections = person_detector.inference(&image)?;
+                        trace.checkpoint("inference_done");
+
+                        let annotated_jpeg = person_detector.postprocess(image, &detections)?;
+                        trace.checkpoint("postprocess_done");
+
+                        Ok(annotated_jpeg)
+                    })();
+
+                    match result {
+                        Ok(annotated_frame) => {
+                            let tracked_frame = annotated_frame.attach_trace(trace);
 
                             // Send the frame to the HTTP server thread
-                            match tx.try_send(annotated_frame) {
+                            match tx.try_send(tracked_frame) {
                                 Ok(_) => {
                                     if dropped_frames > 0 {
                                         log::info!(

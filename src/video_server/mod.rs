@@ -1,5 +1,8 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
 };
 
@@ -14,6 +17,7 @@ use esp_idf_svc::{
     ws::FrameType,
 };
 
+use crate::libs::camera::{Camera, Resolution};
 use crate::types::{JpegImage, TrackedImage};
 
 pub struct VideoHttpServer<'a> {
@@ -52,10 +56,11 @@ fn encode_frame_with_trace(buffer: &mut Vec<u8>, jpeg_data: &[u8], trace_json: &
 }
 
 impl<'a> VideoHttpServer<'a> {
-    pub fn new<T>(rx: Receiver<TrackedImage<T>>) -> anyhow::Result<Self>
-    where
-        T: JpegImage + Send + 'static,
-    {
+    pub fn new(
+        rx: Receiver<TrackedImage>,
+        camera: Arc<Camera>,
+        inference_enabled: Arc<AtomicBool>,
+    ) -> anyhow::Result<Self> {
         let server_config = http::server::Configuration::default();
 
         let mut http_server = EspHttpServer::new(&server_config)?;
@@ -126,6 +131,76 @@ impl<'a> VideoHttpServer<'a> {
             req.into_ok_response()?
                 .write_all(PAGE_HTML_BYTES)
                 .map(|_| ())
+        })?;
+
+        // Handler to update camera settings
+        let set_camera = Arc::clone(&camera);
+        http_server.fn_handler("/camera/set", Method::Get, move |req| {
+            let uri = req.uri();
+            let query = uri.split('?').nth(1).unwrap_or("");
+            for param in query.split('&') {
+                let mut parts = param.split('=');
+                let key = parts.next().unwrap_or("");
+                let value = parts.next().unwrap_or("");
+                match key {
+                    "resolution" => {
+                        if let Some(res) = Resolution::from_str(value) {
+                            if let Err(e) = set_camera.set_resolution(res) {
+                                log::error!("Failed to set resolution: {:?}", e);
+                            }
+                        }
+                    }
+                    "quality" => {
+                        if let Ok(q) = value.parse::<u8>() {
+                            if let Err(e) = set_camera.set_quality(q) {
+                                log::error!("Failed to set quality: {:?}", e);
+                            }
+                        }
+                    }
+                    "brightness" => {
+                        if let Ok(b) = value.parse::<i8>() {
+                            if let Err(e) = set_camera.set_brightness(b) {
+                                log::error!("Failed to set brightness: {:?}", e);
+                            }
+                        }
+                    }
+                    "contrast" => {
+                        if let Ok(c) = value.parse::<i8>() {
+                            if let Err(e) = set_camera.set_contrast(c) {
+                                log::error!("Failed to set contrast: {:?}", e);
+                            }
+                        }
+                    }
+                    "saturation" => {
+                        if let Ok(s) = value.parse::<i8>() {
+                            if let Err(e) = set_camera.set_saturation(s) {
+                                log::error!("Failed to set saturation: {:?}", e);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            req.into_ok_response()?.write_all(b"OK").map(|_| ())
+        })?;
+
+        // Handler to update inference settings
+        let set_inference = Arc::clone(&inference_enabled);
+        http_server.fn_handler("/inference/set", Method::Get, move |req| {
+            let uri = req.uri();
+            let query = uri.split('?').nth(1).unwrap_or("");
+            for param in query.split('&') {
+                let mut parts = param.split('=');
+                let key = parts.next().unwrap_or("");
+                let value = parts.next().unwrap_or("");
+                if key == "enabled" {
+                    if let Ok(enabled) = value.parse::<bool>() {
+                        set_inference.store(enabled, Ordering::Relaxed);
+                        log::info!("Inference enabled: {}", enabled);
+                    }
+                }
+            }
+            req.into_ok_response()?.write_all(b"OK").map(|_| ())
         })?;
 
         // WebSocket handler. Tracks new sessions.

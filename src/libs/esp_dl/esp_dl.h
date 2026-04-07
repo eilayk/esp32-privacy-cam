@@ -84,6 +84,12 @@ esp_err_t pedestrian_detection(void *model, const esp_dl_image_t *input_image, e
 // - `detections`: Pointer to the detection list structure containing the detections to draw.
 void esp_dl_draw_detections(esp_dl_image_t *image, const esp_dl_detection_list_t *detections);
 
+// Applies anonymizing blur inside each detection rectangle on the given image.
+// Parameters:
+// - `image`: Pointer to the image structure to modify in place.
+// - `detections`: Pointer to the detection list structure containing rectangles to blur.
+void esp_dl_blur_detections(esp_dl_image_t *image, const esp_dl_detection_list_t *detections);
+
 // Encodes the given image to JPEG format.
 // The caller must free `out_jpeg` with `esp_dl_jpeg_free()`.
 // Parameters:

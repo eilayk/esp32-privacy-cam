@@ -62,7 +62,7 @@ unsafe extern "C" {
         input_image: *const EspDlImageRaw,
         out_result: *mut EspDlDetectionListRaw,
     ) -> esp_err_t;
-    fn esp_dl_draw_detections(image: *mut EspDlImageRaw, detections: *const EspDlDetectionListRaw);
+    fn esp_dl_blur_detections(image: *mut EspDlImageRaw, detections: *const EspDlDetectionListRaw);
     fn esp_dl_encode_jpeg(image: *const EspDlImageRaw, out_jpeg: *mut EspDlJpegRaw) -> esp_err_t;
     fn esp_dl_detection_list_free(result: *mut EspDlDetectionListRaw);
     fn esp_dl_jpeg_free(jpeg: *mut EspDlJpegRaw);
@@ -248,11 +248,11 @@ impl PedestrianDetector {
         Ok(Detections { raw })
     }
 
-    /// Postprocess the results by annotating the image and re-encoding it.
+    /// Postprocess the results by anonymizing detections and re-encoding the image.
     ///
-    /// This draws detection boxes onto the provided `EspDlImage` and then encodes
-    /// the result back into a JPEG format. Returns an `OwnedEspDlJpeg` containing
-    /// the final annotated image.
+    /// This blurs detected person regions on the provided `EspDlImage` and then
+    /// encodes the result back into a JPEG format. Returns an `OwnedEspDlJpeg`
+    /// containing the final anonymized image.
     pub fn postprocess(
         &self,
         image: EspDlImage,
@@ -260,7 +260,7 @@ impl PedestrianDetector {
     ) -> Result<OwnedEspDlJpeg> {
         let mut raw_image = image.raw;
         unsafe {
-            esp_dl_draw_detections(&mut raw_image, &detections.raw);
+            esp_dl_blur_detections(&mut raw_image, &detections.raw);
         }
 
         let mut raw_jpeg = EspDlJpegRaw {

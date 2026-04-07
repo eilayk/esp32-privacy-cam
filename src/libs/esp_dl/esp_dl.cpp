@@ -127,6 +127,76 @@ extern "C" esp_err_t pedestrian_detection(void *model, const esp_dl_image_t *inp
     return ESP_OK;
 }
 
+static void blur_region_rgb888(esp_dl_image_t *image, int left, int top, int right, int bottom)
+{
+    constexpr int block_size = 12;
+
+    const int width = static_cast<int>(image->width);
+    const int height = static_cast<int>(image->height);
+    const int channels = 3;
+
+    const int x0 = std::clamp(left, 0, width - 1);
+    const int y0 = std::clamp(top, 0, height - 1);
+    const int x1 = std::clamp(right + 1, 0, width);
+    const int y1 = std::clamp(bottom + 1, 0, height);
+
+    if (x1 <= x0 || y1 <= y0)
+    {
+        return;
+    }
+
+    uint8_t *pixels = image->data;
+    const size_t stride = image->stride;
+
+    for (int by = y0; by < y1; by += block_size)
+    {
+        for (int bx = x0; bx < x1; bx += block_size)
+        {
+            const int block_end_y = std::min(by + block_size, y1);
+            const int block_end_x = std::min(bx + block_size, x1);
+
+            uint32_t sum_r = 0;
+            uint32_t sum_g = 0;
+            uint32_t sum_b = 0;
+            uint32_t count = 0;
+
+            for (int y = by; y < block_end_y; ++y)
+            {
+                uint8_t *row = pixels + static_cast<size_t>(y) * stride;
+                for (int x = bx; x < block_end_x; ++x)
+                {
+                    uint8_t *px = row + static_cast<size_t>(x) * channels;
+                    sum_r += px[0];
+                    sum_g += px[1];
+                    sum_b += px[2];
+                    ++count;
+                }
+            }
+
+            if (count == 0)
+            {
+                continue;
+            }
+
+            const uint8_t avg_r = static_cast<uint8_t>(sum_r / count);
+            const uint8_t avg_g = static_cast<uint8_t>(sum_g / count);
+            const uint8_t avg_b = static_cast<uint8_t>(sum_b / count);
+
+            for (int y = by; y < block_end_y; ++y)
+            {
+                uint8_t *row = pixels + static_cast<size_t>(y) * stride;
+                for (int x = bx; x < block_end_x; ++x)
+                {
+                    uint8_t *px = row + static_cast<size_t>(x) * channels;
+                    px[0] = avg_r;
+                    px[1] = avg_g;
+                    px[2] = avg_b;
+                }
+            }
+        }
+    }
+}
+
 extern "C" void esp_dl_draw_detections(esp_dl_image_t *image, const esp_dl_detection_list_t *detections)
 {
     if (image == nullptr || detections == nullptr || image->data == nullptr || detections->items == nullptr)
@@ -155,6 +225,33 @@ extern "C" void esp_dl_draw_detections(esp_dl_image_t *image, const esp_dl_detec
         if (right > left && bottom > top)
         {
             dl::image::draw_hollow_rectangle(img, left, top, right, bottom, box_color, line_width);
+        }
+    }
+}
+
+extern "C" void esp_dl_blur_detections(esp_dl_image_t *image, const esp_dl_detection_list_t *detections)
+{
+    if (image == nullptr || detections == nullptr || image->data == nullptr || detections->items == nullptr)
+    {
+        return;
+    }
+
+    if (image->pix_type != ESP_DL_PIX_TYPE_RGB888)
+    {
+        return;
+    }
+
+    for (size_t i = 0; i < detections->len; ++i)
+    {
+        const auto &result = detections->items[i];
+        int left = std::clamp(static_cast<int>(result.left), 0, static_cast<int>(image->width) - 1);
+        int top = std::clamp(static_cast<int>(result.top), 0, static_cast<int>(image->height) - 1);
+        int right = std::clamp(static_cast<int>(result.right), 0, static_cast<int>(image->width) - 1);
+        int bottom = std::clamp(static_cast<int>(result.bottom), 0, static_cast<int>(image->height) - 1);
+
+        if (right > left && bottom > top)
+        {
+            blur_region_rgb888(image, left, top, right, bottom);
         }
     }
 }
